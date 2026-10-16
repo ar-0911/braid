@@ -813,18 +813,20 @@ def cmd_doctor(args):
 
 def cmd_connect(args):
     """Give the Claude Code session you work in braid's tools, so you can say "split this up" and it delegates."""
-    store = open_store()
+    store = open_store() if args.scope != "user" else None
+    repo = [] if store is None else ["-e", f"BRAID_REPO={store.repo}"]  # user scope: whichever repo you're in
     cmd = ["claude", "mcp", "add", "braid", "--scope", args.scope, "-e", f"PYTHONPATH={PKG_PARENT}",
-           "-e", f"BRAID_REPO={store.repo}", "--", sys.executable, "-m", "braid", "mcp"]
+           *repo, "--", sys.executable, "-m", "braid", "mcp"]
     from shutil import which
     if which("claude") and not args.print_only:
-        r = subprocess.run(cmd, cwd=store.repo, capture_output=True, text=True)
+        r = subprocess.run(cmd, cwd=store.repo if store else None, capture_output=True, text=True)
         print((r.stdout + r.stderr).strip() or "added")
         if r.returncode != 0:
             sys.exit(r.returncode)
     else:
         print(" ".join(shlex.quote(c) for c in cmd))
-    print("\nnow, in Claude Code in this repo, ask for something big and say to delegate it with braid,\n"
+    where = "any git repo" if store is None else "this repo"
+    print(f"\nnow, in Claude Code in {where}, ask for something big and say to delegate it with braid,\n"
           "e.g. \"use braid to build a REST API and a web UI for todos\". It calls delegate, then team_status.")
 
 
