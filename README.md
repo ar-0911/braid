@@ -17,7 +17,7 @@ Each task gets its own agent, branch and worktree. The agents share a memory, se
 ## Install
 
 ```sh
-pip install git+https://github.com/<you>/braid      # or, from a checkout: pip install .
+pip install git+https://github.com/ar-0911/braid   # or, from a checkout: pip install .
 braid doctor                                          # checks git, python, the agent CLI
 ```
 
