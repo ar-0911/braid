@@ -84,6 +84,19 @@ class Approvals(ApprovalCase):
         self.assertIn("return 10", self.show("main"))
         self.assertIn("x = 2", self.show("main", "other.py"))
 
+    def test_yes_waits_for_a_dirty_main_checkout_without_asking_again(self):
+        self.ready(self.one, self.wt1, "return 1", "return 10")
+        braid("land", cwd=self.repo, check=False)
+        (self.repo / "other.py").write_text("x = 'local edit'\n")  # unsaved work where main is checked out
+        r = braid("approve", "1", cwd=self.repo, check=False)
+        self.assertIn("uncommitted changes", r.stdout)
+        self.assertEqual(approve.get(self.store, 1)["status"], "approved")
+        self.assertIn("waiting", braid("land", cwd=self.repo, check=False).stdout)
+        self.assertEqual(len(approve.all_approvals(self.store)), 1)  # no second email
+        sh("git", "checkout", "other.py", cwd=self.repo)
+        self.assertIn("landed  task-one", braid("land", cwd=self.repo).stdout)
+        self.assertEqual(approve.get(self.store, 1)["status"], "landed")
+
     def test_big_diff_links_to_review_page_instead(self):
         self.store.set_cfg("approve.inline_diff_lines", "2")
         self.store.set_cfg("approve.public_url", "https://braid.example/")
