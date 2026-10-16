@@ -1,0 +1,17 @@
+# braid approvals worker. Fill in database_id and the two email addresses, then: npx wrangler deploy
+name = "braid-approvals"
+main = "worker.js"
+compatibility_date = "2025-09-01"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "braid-approvals"
+database_id = "REPLACE_WITH_ID_FROM_wrangler_d1_create"
+
+[vars]
+OWNER_EMAIL = "you@gmail.com"          # where approvals go; verify it in Email Routing > Destination addresses
+FROM_EMAIL = "braid@yourdomain.com"    # an address on your domain; route it to this worker for replies
+
+[[send_email]]
+name = "EMAIL"
+destination_address = "you@gmail.com"  # same as OWNER_EMAIL

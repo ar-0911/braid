@@ -9,7 +9,7 @@ import sys
 import time
 from pathlib import Path
 
-from . import __version__, gitutil, land, planner, predict, structmerge
+from . import __version__, approvals_cli, gitutil, land, notify, planner, predict, structmerge
 from .store import DEFAULTS, Store
 
 HOOK_MARKER = "# installed by braid"
@@ -610,6 +610,10 @@ def tick(store, auto_land=None):
             predict.check(store)  # base moved: refresh everyone's risks against it
             if store.plans("running"):
                 planner.advance(store, plan_starter(store))
+    replies = notify.poll(store)  # yes/no replies to approval requests; a yes lands right away
+    results += [("approval", land.LandResult(True, msg)) for msg in replies]
+    if replies and store.plans("running"):
+        planner.advance(store, plan_starter(store))
     return new, results
 
 
@@ -617,6 +621,13 @@ def cmd_watch(args):
     store = open_store()
     interval = args.interval or float(store.cfg("watch.interval"))
     print(f"braid watching every {interval}s", flush=True)
+    server = None
+    if store.cfg_bool("approve.required") and "cloudflare" not in notify.channels(store):  # serve review pages
+        try:
+            server = approvals_cli.review_page.ReviewServer(store).start()
+            print(f"review pages at {server.url()}", flush=True)
+        except OSError as e:
+            print(f"review page server not started: {e}", flush=True)
     stop = []
     signal.signal(signal.SIGTERM, lambda *a: stop.append(1))
     try:
@@ -637,6 +648,8 @@ def cmd_watch(args):
                 time.sleep(0.1)
     except KeyboardInterrupt:
         pass
+    if server:
+        server.close()
     (store.dir / "daemon.pid").unlink(missing_ok=True) if daemon_pid(store) == os.getpid() else None
 
 
@@ -952,6 +965,8 @@ def build_parser():
     s = add("connect", cmd_connect, "give your own Claude Code session braid's tools (delegate, team_status)")
     s.add_argument("--scope", default="local", choices=["local", "project", "user"])
     s.add_argument("--print-only", action="store_true", help="print the command instead of running it")
+
+    approvals_cli.register(add)
 
     s = sub.add_parser("merge-driver")
     s.add_argument("base")
