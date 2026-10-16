@@ -139,6 +139,28 @@ DEFAULTS = {
 }
 
 
+def global_dir():
+    """Per-user braid settings and secrets, shared by every repo: ~/.config/braid (or $BRAID_HOME)."""
+    return Path(os.environ.get("BRAID_HOME") or Path.home() / ".config" / "braid")
+
+
+def global_cfg():
+    try:
+        return json.loads((global_dir() / "settings.json").read_text())
+    except (OSError, ValueError):
+        return {}
+
+
+def set_global_cfg(key, value):
+    data = global_cfg()
+    if value == "":
+        data.pop(key, None)
+    else:
+        data[key] = value
+    global_dir().mkdir(parents=True, exist_ok=True)
+    (global_dir() / "settings.json").write_text(json.dumps(data, indent=1, sort_keys=True))
+
+
 class Store:
     def __init__(self, repo):
         self.repo = Path(repo)
@@ -167,7 +189,11 @@ class Store:
         self.db.execute("INSERT OR REPLACE INTO meta(key, value) VALUES (?, ?)", (key, str(value)))
 
     def cfg(self, key):
-        return self.get_meta("cfg." + key, DEFAULTS.get(key, ""))
+        """This repo's setting, else your global one (braid settings --global), else the default."""
+        value = self.get_meta("cfg." + key)
+        if value is None:
+            value = global_cfg().get(key)
+        return value if value is not None else DEFAULTS.get(key, "")
 
     def cfg_bool(self, key):
         return self.cfg(key).lower() in ("1", "true", "yes", "on")

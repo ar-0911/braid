@@ -40,32 +40,38 @@ class ChannelError(RuntimeError):
 
 # ------------------------------------------------------------------ secrets
 
-def _secrets_file(store):
+def _secrets_file(store, global_=False):
+    if global_:
+        from .store import global_dir
+        return global_dir() / "secrets.json"
     return store.dir / "secrets.json"
 
 
+def _read(f):
+    try:
+        return json.loads(f.read_text())
+    except (OSError, ValueError):
+        return {}
+
+
 def secret(store, name):
-    if os.environ.get(name):
-        return os.environ[name]
-    try:
-        return json.loads(_secrets_file(store).read_text()).get(name, "")
-    except (OSError, ValueError):
-        return ""
+    """From the environment, else this repo's secrets, else your global ones."""
+    return (os.environ.get(name) or _read(_secrets_file(store)).get(name)
+            or _read(_secrets_file(store, global_=True)).get(name) or "")
 
 
-def set_secret(store, name, value):
-    f = _secrets_file(store)
-    try:
-        data = json.loads(f.read_text())
-    except (OSError, ValueError):
-        data = {}
+def set_secret(store, name, value, global_=False):
+    f = _secrets_file(store, global_)
+    data = _read(f)
     if value:
         data[name] = value
     else:
         data.pop(name, None)
+    f.parent.mkdir(parents=True, exist_ok=True)
     f.touch(mode=0o600, exist_ok=True)
     os.chmod(f, 0o600)
     f.write_text(json.dumps(data, indent=1))
+    return f
 
 
 def channels(store):

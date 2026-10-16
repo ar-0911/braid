@@ -21,6 +21,8 @@ def _line(a):
 
 
 def cmd_approvals(args):
+    if args.action == "secret" and args.global_:
+        return _global_secret(args)
     store = _store()
     action = args.action or "list"
     if action == "list":
@@ -53,8 +55,9 @@ def cmd_approvals(args):
         if not args.arg or args.arg not in notify.SECRETS:
             sys.exit(f"secret name is one of: {', '.join(notify.SECRETS)}")
         value = args.value if args.value is not None else getpass.getpass(f"{args.arg}: ")
-        notify.set_secret(store, args.arg, value.strip())
-        print(f"saved {args.arg} in {store.dir / 'secrets.json'} (only you can read it)")
+        f = notify.set_secret(store, args.arg, value.strip(), global_=args.global_)
+        print(f"saved {args.arg} in {f} (only you can read it)"
+              + ("; every repo uses it" if args.global_ else ""))
     elif action == "test":
         test_channels(store)
     elif action == "telegram-id":
@@ -63,6 +66,14 @@ def cmd_approvals(args):
             print("no messages yet: send any message to your bot in Telegram, then run this again")
         for cid, who in ids.items():
             print(f"{cid}  {who}    ->  braid settings approve.telegram.chat_id {cid}")
+
+
+def _global_secret(args):
+    if not args.arg or args.arg not in notify.SECRETS:
+        sys.exit(f"secret name is one of: {', '.join(notify.SECRETS)}")
+    value = args.value if args.value is not None else getpass.getpass(f"{args.arg}: ")
+    f = notify.set_secret(None, args.arg, value.strip(), global_=True)
+    print(f"saved {args.arg} in {f} (only you can read it); every repo uses it")
 
 
 def serve(store, args):
@@ -143,6 +154,8 @@ def register(add):
     s.add_argument("value", nargs="?", help="secret value (prompted for if left out)")
     s.add_argument("--all", action="store_true", help="include decided ones")
     s.add_argument("--port", type=int)
+    s.add_argument("--global", dest="global_", action="store_true",
+                   help="secret: save it for every repo (~/.config/braid)")
 
     s = add("approve", cmd_approve, "say yes to a change waiting for approval; it lands right away")
     s.add_argument("ref", nargs="?", help="approval id or reply code (default: the only pending one)")

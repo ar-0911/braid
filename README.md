@@ -76,6 +76,15 @@ Reply `YES` (or `NO` and a reason), tap the button, or run `braid approve` / `br
 | email | an SMTP/IMAP login, e.g. a Gmail [app password](https://myaccount.google.com/apppasswords) | `braid settings approve.email.to you@x.com`, `braid settings approve.email.user you@gmail.com`, `braid approvals secret BRAID_SMTP_PASSWORD` |
 | anything else | a command | `braid settings approve.command "curl -d {message} ntfy.sh/my-topic"` |
 
+Set it up once for every repo with `--global` (stored in `~/.config/braid`, secrets mode 600); a repo's own settings still win:
+
+```sh
+braid settings --global approve.required yes
+braid settings --global approve.channels cloudflare
+braid settings --global approve.cloudflare.url https://braid-approvals.<you>.workers.dev
+braid approvals secret --global BRAID_RELAY_KEY
+```
+
 Replies are read by polling (the Worker, Twilio's message log, Telegram's getUpdates, IMAP), so nothing on the internet needs to reach your machine to get the yes. With the Cloudflare channel the review page lives on your Worker. Otherwise it is served by the watcher on `approve.port` (8765). To open it from your phone, set `approve.tunnel cloudflared` (free `https://…trycloudflare.com` link, no account; install `cloudflared`) or point `approve.public_url` at your own Tailscale/ngrok address. Every link carries a secret token. Without either, emails attach the review page and messages say to run `braid approvals show <id>`.
 
 WhatsApp note: Twilio only delivers free-form messages within 24 hours of your last message to it (sandbox included). For approvals at any time, create a WhatsApp template in Twilio with variables `{{1}}` title, `{{2}}` summary, `{{3}}` link, `{{4}}` reply code and set `approve.whatsapp.content_sid`, or use Telegram or email, which have no such window.
@@ -195,7 +204,7 @@ Use a different agent CLI: `braid settings agent.command "my-agent --mcp {mcp_co
 python -m unittest discover -s tests -v
 ```
 
-57 tests, including end-to-end runs where `braid start` and `braid do` launch real processes (scripted fake agents) and the watcher reviews, resolves and lands them.
+59 tests, including end-to-end runs where `braid start` and `braid do` launch real processes (scripted fake agents) and the watcher reviews, resolves and lands them.
 
 ## Status and roadmap
 
