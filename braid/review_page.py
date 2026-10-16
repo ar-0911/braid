@@ -98,6 +98,45 @@ def _tests_chip(t):
     return f'<span class="chip ok">tests passed{n}</span>' if t["passed"] else '<span class="chip bad">tests failed</span>'
 
 
+def render_email_card(a, url):
+    """The approval email when there is a review page to link to: a short card and one button.
+
+    Inline styles only, since mail clients drop most stylesheets."""
+    r, t = a["report"], a["report"]["tests"]
+    tests = ("no tests configured" if not t["ran"] else
+             ("tests passed" + (f" ({t['counts']['passed']})" if t.get("counts") else "")) if t["passed"]
+             else "tests failed")
+    risk_color = {"low": "#1a7f45", "medium": "#b7791f", "high": "#c0392b"}.get(r["risk"], "#5d6677")
+    n = len(r["files"])
+    facts = (f"<span style='color:{'#1a7f45' if t['passed'] or not t['ran'] else '#c0392b'}'>{_e(tests)}</span>"
+             f" &middot; <span style='color:{risk_color}'>{_e(r['risk'])} risk</span>"
+             f" &middot; {n} file{'s' * (n != 1)} <span style='color:#1a7f45'>+{r['added']}</span>"
+             f" <span style='color:#c0392b'>-{r['removed']}</span>")
+    font = "-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Helvetica,Arial,sans-serif"
+    return (
+        f"<!doctype html><html><head><meta charset='utf-8'>"
+        f"<meta name='viewport' content='width=device-width,initial-scale=1'></head>"
+        f"<body style='margin:0;padding:0;background:#f4f5f7'>"
+        f"<table role='presentation' width='100%' cellpadding='0' cellspacing='0' style='background:#f4f5f7'>"
+        f"<tr><td align='center' style='padding:24px 12px'>"
+        f"<table role='presentation' width='100%' cellpadding='0' cellspacing='0' style='max-width:520px;"
+        f"background:#ffffff;border-radius:12px;border:1px solid #e3e6ec'>"
+        f"<tr><td style='padding:24px 24px 8px;font-family:{font};color:#5d6677;font-size:13px'>"
+        f"braid &middot; {_e(r['agent'])} &rarr; {_e(r['base'])}</td></tr>"
+        f"<tr><td style='padding:0 24px;font-family:{font};color:#1d2330;font-size:20px;font-weight:700;"
+        f"line-height:1.3'>{_e(r['title'])}</td></tr>"
+        f"<tr><td style='padding:10px 24px 0;font-family:{font};font-size:14px'>{facts}</td></tr>"
+        f"<tr><td style='padding:14px 24px 0;font-family:{font};color:#1d2330;font-size:15px;line-height:1.5'>"
+        f"{_e(r['summary'])}</td></tr>"
+        f"<tr><td style='padding:24px'><a href='{_e(url)}' style='display:block;background:#1a7f45;"
+        f"color:#ffffff;text-align:center;padding:14px 18px;border-radius:8px;text-decoration:none;"
+        f"font-family:{font};font-size:16px;font-weight:600'>Review and land</a></td></tr>"
+        f"<tr><td style='padding:0 24px 24px;font-family:{font};color:#5d6677;font-size:13px;line-height:1.5'>"
+        f"The page shows what changed, how it affects you, the tests and the full diff. "
+        f"Or just reply <b>yes</b> to land it, or <b>no</b> and a reason to send it back.</td></tr>"
+        f"</table></td></tr></table></body></html>")
+
+
 def render(store, a, mode="web", url="", page_id=None):
     """mode: web (interactive), static (a saved file), email (an HTML email body).
     page_id is the approval's name in page links (the worker names it differently)."""
@@ -157,7 +196,9 @@ def render(store, a, mode="web", url="", page_id=None):
             f"<li><b>{_e(v['reviewer'])}</b>: {_e(v['verdict'])}. {_e(v['comment'])}</li>" for v in r["reviews"])
             + "</ul></div>")
 
-    if mode == "email":
+    if mode == "email" and url:
+        return render_email_card(a, url)
+    if mode == "email":  # no page to link to, so the email carries the details itself
         parts.append("<h2>Files</h2><table>" + "".join(
             f"<tr><td><code>{_e(f['path'])}</code><div class='meta'>{_e(f['note'])}</div></td>"
             f"<td class='n'><span class='a'>+{f['added']}</span> <span class='d'>-{f['removed']}</span></td></tr>"
