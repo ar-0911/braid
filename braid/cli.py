@@ -754,6 +754,19 @@ def cmd_vote(args):
 # ------------------------------------------------------------------ config / doctor / internals
 
 def cmd_config(args):
+    if args.global_:  # per-user defaults for every repo, no repo needed
+        from .store import global_cfg, set_global_cfg
+        if args.key is None:
+            for k, v in global_cfg().items():
+                print(f"{k} = {v}")
+        elif args.value is None:
+            print(global_cfg().get(args.key, ""))
+        elif args.key not in DEFAULTS:
+            sys.exit(f"unknown key {args.key}. keys: {', '.join(DEFAULTS)}")
+        else:
+            set_global_cfg(args.key, args.value)
+            print(f"{args.key} = {args.value}  (every repo, unless a repo sets its own)")
+        return
     store = open_store()
     if args.key is None:
         for k, v in store.all_cfg().items():
@@ -966,6 +979,8 @@ def build_parser():
     s = add("settings", cmd_config, "show or set braid settings")
     s.add_argument("key", nargs="?")
     s.add_argument("value", nargs="?")
+    s.add_argument("--global", dest="global_", action="store_true",
+                   help="set it for every repo on this machine (~/.config/braid)")
 
     add("doctor", cmd_doctor, "check that everything braid needs is in place")
 

@@ -253,3 +253,26 @@ class Channels(ApprovalCase):
         self.assertEqual(approve.get(self.store, 1)["status"], "landed")
         put = [c for c in self.calls if c[1] and c[1].get("status") == "landed"]
         self.assertEqual(len(put), 1)  # the page was told how it ended
+
+
+class GlobalSettings(RepoCase):
+    agents = ()
+
+    def tearDown(self):
+        from braid.store import global_dir
+        for name in ("settings.json", "secrets.json"):
+            (global_dir() / name).unlink(missing_ok=True)
+        super().tearDown()
+
+    def test_global_settings_and_secrets_apply_to_every_repo(self):
+        elsewhere = Path(self.tmp.name)  # not a repo: --global works anywhere
+        braid("settings", "--global", "approve.required", "yes", cwd=elsewhere)
+        braid("settings", "--global", "approve.channels", "cloudflare", cwd=elsewhere)
+        braid("approvals", "secret", "--global", "BRAID_RELAY_KEY", "k1", cwd=elsewhere)
+        self.assertTrue(approve.required(self.store))
+        self.assertEqual(notify.secret(self.store, "BRAID_RELAY_KEY"), "k1")
+        self.assertIn("approve.channels = cloudflare", braid("settings", cwd=self.repo).stdout)
+        braid("settings", "approve.channels", "email", cwd=self.repo)  # a repo can still override
+        self.assertEqual(self.store.cfg("approve.channels"), "email")
+        braid("settings", "--global", "approve.required", "", cwd=elsewhere)
+        self.assertFalse(approve.required(self.store))
