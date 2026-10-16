@@ -1,82 +1,59 @@
-"""MCP server (stdio, JSON-RPC 2.0) that gives each agent access to the shared memory.
+"""MCP server (stdio, JSON-RPC 2.0) that connects each agent to braid's shared memory.
 
-Started per agent by its MCP config with AGIT_AGENT=<name> and AGIT_REPO=<repo path>.
-No third-party dependencies.
+Started per agent by its MCP config with BRAID_AGENT=<name> and BRAID_REPO=<repo path>. No dependencies.
 """
 import json
 import os
 import sys
 
-from . import predict
+from . import __version__, gitutil, land, predict
 from .store import Store
 
 PROTOCOL_VERSION = "2025-06-18"
 
+
+def _obj(props=None, required=()):
+    return {"type": "object", "properties": props or {}, "required": list(required)}
+
+
+S = {"type": "string"}
 TOOLS = [
-    {
-        "name": "whoami",
-        "description": "Your agent name, branch, worktree and task.",
-        "inputSchema": {"type": "object", "properties": {}},
-    },
-    {
-        "name": "peers",
-        "description": "Every other agent working in this repo right now: task, branch, declared intents, leases.",
-        "inputSchema": {"type": "object", "properties": {}},
-    },
-    {
-        "name": "risks",
-        "description": "Predicted merge conflicts and file overlaps between you and other agents or the base branch. "
-                       "Runs a fresh check first. Check this before and after editing shared files.",
-        "inputSchema": {"type": "object", "properties": {}},
-    },
-    {
-        "name": "declare_intent",
-        "description": "Tell other agents which files or globs you plan to change and why. Do this before starting a subtask.",
-        "inputSchema": {
-            "type": "object",
-            "properties": {
-                "paths": {"type": "array", "items": {"type": "string"}},
-                "description": {"type": "string"},
-            },
-            "required": ["paths", "description"],
-        },
-    },
-    {
-        "name": "acquire_lease",
-        "description": "Claim a file, directory or glob. 'soft' signals ownership; 'hard' makes other agents' commits "
-                       "touching it fail. Fails if someone else holds a hard lease on it.",
-        "inputSchema": {
-            "type": "object",
-            "properties": {
-                "path": {"type": "string"},
-                "kind": {"type": "string", "enum": ["soft", "hard"], "default": "soft"},
-                "ttl_seconds": {"type": "integer", "default": 3600},
-            },
-            "required": ["path"],
-        },
-    },
-    {
-        "name": "release_lease",
-        "description": "Release one of your leases, or all of them if path is omitted.",
-        "inputSchema": {"type": "object", "properties": {"path": {"type": "string"}}},
-    },
-    {
-        "name": "post_note",
-        "description": "Share a finding every agent should know, e.g. an API change, a decision, or a request to another agent.",
-        "inputSchema": {
-            "type": "object",
-            "properties": {"topic": {"type": "string"}, "text": {"type": "string"}},
-            "required": ["topic", "text"],
-        },
-    },
-    {
-        "name": "read_notes",
-        "description": "Read notes from all agents (and conflict alerts from agit), optionally only newer than an id.",
-        "inputSchema": {
-            "type": "object",
-            "properties": {"since_id": {"type": "integer", "default": 0}, "topic": {"type": "string"}},
-        },
-    },
+    ("whoami", "Your agent name, branch, worktree, task and status.", _obj()),
+    ("peers", "Every other agent in this repo: task, status, declared intents and leases.", _obj()),
+    ("risks", "Fresh prediction of merge conflicts/overlaps between you and other agents or the base branch. "
+              "Call before and after editing shared files.", _obj()),
+    ("declare_intent", "Tell other agents which files/globs you plan to change and why. Do this before each "
+                       "subtask. Returns any leases others hold on them.",
+     _obj({"paths": {"type": "array", "items": S}, "description": S}, ["paths", "description"])),
+    ("acquire_lease", "Claim a file, directory or glob. soft = signal ownership; hard = other agents' commits that "
+                      "touch it are blocked. Fails if another agent holds a hard lease on it.",
+     _obj({"path": S, "kind": {"type": "string", "enum": ["soft", "hard"]}, "ttl_seconds": {"type": "integer"}},
+          ["path"])),
+    ("release_lease", "Release one of your leases, or all of them if path is omitted.", _obj({"path": S})),
+    ("post_note", "Share something other agents need to know (API change, decision, request). Set `to` to "
+                  "address one agent; omit it for everyone.", _obj({"topic": S, "text": S, "to": S},
+                                                                  ["topic", "text"])),
+    ("read_notes", "Notes for you or everyone, including braid's conflict, landing and decision alerts. Pass the "
+                   "highest id you've seen as since_id to get only new ones.",
+     _obj({"since_id": {"type": "integer"}, "topic": S})),
+    ("sync", "Merge the latest base branch into your branch (your uncommitted work is stashed and restored). "
+             "If it reports conflicts, edit those files to keep both changes, then git add and git commit.", _obj()),
+    ("ready_to_land", "Mark your work finished and ready to be merged into the base branch. Commit everything "
+                      "first. Another agent will review it; braid then merges, runs tests and lands it.",
+     _obj({"summary": S}, ["summary"])),
+    ("pending_reviews", "Work from other agents that is waiting for a review. Review it with show_diff and review.",
+     _obj()),
+    ("show_diff", "The full diff an agent's branch would bring into the base branch.",
+     _obj({"agent": S}, ["agent"])),
+    ("review", "Record your review of another agent's work. verdict 'approve' lets it land; 'changes' blocks it "
+               "until they push new commits. Be specific in the comment.",
+     _obj({"agent": S, "verdict": {"type": "string", "enum": ["approve", "changes"]}, "comment": S},
+          ["agent", "verdict", "comment"])),
+    ("decisions", "Conflict resolutions that involve you, with their status.", _obj()),
+    ("vote", "Accept or object to an automatic conflict resolution that involves your work. An objection stops "
+             "it from landing.",
+     _obj({"decision_id": {"type": "integer"}, "vote": {"type": "string", "enum": ["accept", "object"]},
+           "reason": S}, ["decision_id", "vote"])),
 ]
 
 
@@ -85,20 +62,25 @@ class Server:
         self.store = Store(repo)
         self.agent = agent
 
+    def me(self):
+        a = self.store.agent(self.agent)
+        if not a:
+            raise RuntimeError(f"agent {self.agent!r} is not registered; start agents with `braid start`")
+        return a
+
     def call(self, name, args):
         s, me = self.store, self.agent
         if name == "whoami":
-            return s.agent(me) or {"name": me, "error": "not registered; run `agit run` to create agents"}
+            return self.me()
         if name == "peers":
             leases = s.leases()
-            return [
-                {**a, "intents": s.intents(a["name"]),
-                 "leases": [l for l in leases if l["agent"] == a["name"]]}
-                for a in s.agents() if a["name"] != me
-            ]
+            return [{"name": a["name"], "task": a["task"], "status": a["status"], "branch": a["branch"],
+                     "intents": [{"paths": i["paths"], "description": i["description"]} for i in s.intents(a["name"])],
+                     "leases": [{"path": l["path"], "kind": l["kind"]} for l in leases if l["agent"] == a["name"]]}
+                    for a in s.live_agents() if a["name"] != me]
         if name == "risks":
             predict.check(s)
-            return s.risks(me)
+            return s.risks(me) or "no conflicts or overlaps predicted"
         if name == "declare_intent":
             s.declare_intent(me, args["paths"], args["description"])
             clashes = [l for p in args["paths"] for l in s.overlapping_leases(p) if l["agent"] != me]
@@ -110,10 +92,60 @@ class Server:
             s.release_lease(me, args.get("path"))
             return {"ok": True}
         if name == "post_note":
-            s.post_note(me, args["topic"], args["text"])
+            s.post_note(me, args["topic"], args["text"], args.get("to"))
             return {"ok": True}
         if name == "read_notes":
-            return s.notes(args.get("since_id", 0), args.get("topic"))
+            return s.notes(args.get("since_id", 0), args.get("topic"), for_agent=me)
+        if name == "sync":
+            ok, msg, files = land.sync(s, me)
+            return {"ok": ok, "message": msg, "conflicted_files": files}
+        if name == "ready_to_land":
+            a = self.me()
+            if not gitutil.is_clean(a["worktree"]):
+                return {"ok": False, "error": "you have uncommitted changes; commit them first"}
+            s.update_agent(me, summary=args["summary"])
+            s.set_status(me, "ready", args["summary"])
+            s.post_note(me, "review", f"{me} is ready to land: {args['summary']}. Please review with show_diff.")
+            return {"ok": True, "next": "braid will land your work once it is reviewed and tests pass. "
+                                        "Meanwhile, review others' work with pending_reviews."}
+        if name == "pending_reviews":
+            out = []
+            for a in s.agents(("ready",)):
+                if a["name"] == me:
+                    continue
+                head = gitutil.rev(a["branch"], cwd=s.repo)
+                if s.reviews(a["name"], head):
+                    continue
+                stat = gitutil.out("diff", "--stat", f"{s.base_branch()}...{a['branch']}", cwd=s.repo)
+                out.append({"agent": a["name"], "task": a["task"], "summary": a["summary"], "diffstat": stat})
+            return out or "nothing waiting for review"
+        if name == "show_diff":
+            a = s.agent(args["agent"])
+            if not a:
+                raise KeyError(f"no agent {args['agent']}")
+            diff = gitutil.out("diff", f"{s.base_branch()}...{a['branch']}", cwd=s.repo)
+            return diff[:80000] + ("\n[diff truncated]" if len(diff) > 80000 else "")
+        if name == "review":
+            target = args["agent"]
+            if target == me:
+                raise ValueError("you can't review your own work")
+            a = s.agent(target)
+            if not a:
+                raise KeyError(f"no agent {target}")
+            head = gitutil.rev(a["branch"], cwd=s.repo)
+            s.add_review(target, me, head, args["verdict"], args["comment"])
+            s.post_note(me, "review", f"Review of your work: {args['verdict']}. {args['comment']}", to=target)
+            if args["verdict"] == "changes" and a["status"] == "ready":
+                s.set_status(target, "active", f"changes requested by {me}")
+            return {"ok": True}
+        if name == "decisions":
+            return s.decisions(agent=me) or "no decisions involve you"
+        if name == "vote":
+            d = s.decision(args["decision_id"])
+            if not d:
+                raise KeyError("no such decision")
+            s.vote(d["id"], me, args["vote"], args.get("reason", ""))
+            return {"ok": True, "decision_status": d["status"]}
         raise KeyError(f"unknown tool {name}")
 
     def handle(self, msg):
@@ -121,24 +153,25 @@ class Server:
         if mid is None:
             return None  # notification
         if method == "initialize":
-            client_version = msg.get("params", {}).get("protocolVersion", PROTOCOL_VERSION)
             return ok(mid, {
-                "protocolVersion": client_version,
+                "protocolVersion": msg.get("params", {}).get("protocolVersion", PROTOCOL_VERSION),
                 "capabilities": {"tools": {}},
-                "serverInfo": {"name": "agit", "version": "0.1.0"},
-                "instructions": "Shared memory for agents working in parallel on one repo. "
-                                "Call peers and risks before editing shared files; declare_intent before each subtask.",
+                "serverInfo": {"name": "braid", "version": __version__},
+                "instructions": "braid connects agents working in parallel on one repo. Check peers and risks "
+                                "before editing shared files, declare_intent before each subtask, read_notes often, "
+                                "review others with pending_reviews, and finish with ready_to_land.",
             })
         if method == "ping":
             return ok(mid, {})
         if method == "tools/list":
-            return ok(mid, {"tools": TOOLS})
+            return ok(mid, {"tools": [{"name": n, "description": d, "inputSchema": sch} for n, d, sch in TOOLS]})
         if method == "tools/call":
             p = msg.get("params", {})
             try:
                 result = self.call(p.get("name"), p.get("arguments") or {})
-                return ok(mid, {"content": [{"type": "text", "text": json.dumps(result, indent=2, default=str)}]})
-            except Exception as e:  # tool errors are reported to the model, not as protocol errors
+                text = result if isinstance(result, str) else json.dumps(result, indent=2, default=str)
+                return ok(mid, {"content": [{"type": "text", "text": text}]})
+            except Exception as e:  # tool errors go back to the model, not as protocol errors
                 return ok(mid, {"content": [{"type": "text", "text": f"error: {e}"}], "isError": True})
         return {"jsonrpc": "2.0", "id": mid, "error": {"code": -32601, "message": f"method not found: {method}"}}
 
@@ -148,9 +181,7 @@ def ok(mid, result):
 
 
 def main():
-    repo = os.environ.get("AGIT_REPO", os.getcwd())
-    agent = os.environ.get("AGIT_AGENT", "human")
-    server = Server(repo, agent)
+    server = Server(os.environ.get("BRAID_REPO", os.getcwd()), os.environ.get("BRAID_AGENT", "human"))
     for line in sys.stdin:
         line = line.strip()
         if not line:
