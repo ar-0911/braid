@@ -125,6 +125,41 @@ class LeadSession(RepoCase):
         with self.assertRaises(PermissionError):
             Server(self.repo, "login").call("start_agents", {"tasks": ["sneaky"]})
 
+    def test_user_scope_server_follows_the_repo_you_are_in(self):
+        import os
+        from braid import mcp_server
+        sub = self.repo / "pkg"
+        sub.mkdir()
+        here = os.getcwd()
+        try:
+            os.chdir(sub)
+            self.assertEqual(Path(mcp_server._repo_here()).resolve(), self.repo.resolve())
+            os.chdir(self.tmp.name)
+            self.assertIsNone(mcp_server._repo_here())
+        finally:
+            os.chdir(here)
+        with self.assertRaisesRegex(RuntimeError, "not in a git repo"):
+            Server(None, "human").call("team_status", {})
+        r = braid("connect", "--scope", "user", "--print-only", cwd=self.tmp.name)
+        self.assertNotIn("BRAID_REPO", r.stdout)
+        self.assertIn("--scope user", r.stdout)
+        r = braid("connect", "--print-only", cwd=self.repo)
+        self.assertIn(f"BRAID_REPO={self.repo}", r.stdout)
+
+    def test_first_delegate_in_a_new_repo_sets_braid_up(self):
+        fresh = Path(self.tmp.name) / "fresh"
+        fresh.mkdir()
+        sh("git", "init", "-q", "-b", "main", cwd=fresh)
+        sh("git", "commit", "-q", "--allow-empty", "-m", "start", cwd=fresh)
+        lead = Server(str(fresh), "human")
+        self.assertFalse(lead.store.initialized())
+        lead.store.set_cfg("agent.command", "true")
+        out = lead.call("start_agents", {"tasks": ["say hi"]})
+        from braid import cli
+        cli.daemon_stop(lead.store)
+        self.assertTrue(lead.store.initialized())
+        self.assertEqual(out["started"][0]["lands_on"], "main")
+
 
 if __name__ == "__main__":
     unittest.main()

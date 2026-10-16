@@ -93,7 +93,7 @@ WhatsApp note: Twilio only delivers free-form messages within 24 hours of your l
 
 ### From your own Claude session: `braid connect`
 
-`braid connect` registers braid's MCP server with Claude Code (`--scope local|project|user`). Your own session then has lead-only tools: `delegate` (plan a goal and start agents, like `braid do`), `start_agents`, and `team_status`. So you can say "split this up and get some agents on it" in your normal chat. Agents themselves cannot start more agents.
+`braid connect` registers braid's MCP server with Claude Code (`--scope local|project|user`). Your own session then has lead-only tools: `delegate` (plan a goal and start agents, like `braid do`), `start_agents`, and `team_status`. So you can say "split this up and get some agents on it" in your normal chat. Agents themselves cannot start more agents. With `--scope user` it works in every repo: the server follows whichever git repo Claude Code is started in, and sets braid up there the first time you delegate. A ready-made `~/.claude/CLAUDE.md` that tells Claude when and how to use braid is in [docs/CLAUDE.md](docs/CLAUDE.md).
 
 ### Everyday commands
 

@@ -1,6 +1,7 @@
 """MCP server (stdio, JSON-RPC 2.0) that connects each agent to braid's shared memory.
 
 Started per agent by its MCP config with BRAID_AGENT=<name> and BRAID_REPO=<repo path>. No dependencies.
+Without BRAID_REPO (braid connect --scope user) it serves the git repo Claude Code was started in.
 """
 import json
 import os
@@ -68,7 +69,7 @@ TOOLS = [
 
 class Server:
     def __init__(self, repo, agent):
-        self.store = Store(repo)
+        self.store = Store(repo) if repo else None
         self.agent = agent
 
     def me(self):
@@ -78,6 +79,9 @@ class Server:
         return a
 
     def call(self, name, args):
+        if self.store is None:
+            raise RuntimeError("this folder is not in a git repo, so braid has nothing to work on here; "
+                               "run git init (or cd into a repo) and start Claude Code there")
         s, me = self.store, self.agent
         if name == "whoami":
             return s.agent(me) or {"name": me, "role": "lead session: you can delegate, start_agents and "
@@ -175,6 +179,13 @@ class Server:
             if s.agent(me):
                 raise PermissionError("only the lead session can start agents; post_note to ask for help instead")
             from . import cli, planner
+            if not s.initialized():  # first use in this repo: set braid up, as `braid init` would
+                import subprocess
+                env = {**os.environ, "PYTHONPATH": cli.PKG_PARENT}
+                r = subprocess.run([sys.executable, "-m", "braid", "init"], cwd=s.repo, env=env,
+                                   capture_output=True, text=True)
+                if r.returncode != 0:
+                    raise RuntimeError(f"braid init failed here: {(r.stdout + r.stderr).strip()[-500:]}")
             base = args.get("base") or s.base_branch()
             cli.ensure_branch(s, base)
             if name == "start_agents":
@@ -236,8 +247,14 @@ def ok(mid, result):
     return {"jsonrpc": "2.0", "id": mid, "result": result}
 
 
+def _repo_here():
+    """The main worktree of the git repo around the current directory, or None outside one."""
+    rc, out = gitutil.git("rev-parse", "--path-format=absolute", "--git-common-dir", check=False)
+    return os.path.dirname(out.strip()) if rc == 0 else None
+
+
 def main():
-    server = Server(os.environ.get("BRAID_REPO", os.getcwd()), os.environ.get("BRAID_AGENT", "human"))
+    server = Server(os.environ.get("BRAID_REPO") or _repo_here(), os.environ.get("BRAID_AGENT", "human"))
     for line in sys.stdin:
         line = line.strip()
         if not line:
