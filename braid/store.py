@@ -126,7 +126,12 @@ DEFAULTS = {
     "review.required": "auto",         # auto: needs a peer approval while a peer is still running; yes; no
     "review.command": "",              # optional automatic reviewer, e.g. "claude -p {prompt}"
     "resolve.command": "claude -p {prompt} --permission-mode acceptEdits",
+    "resolve.verify": "true",          # a second model checks every automatic resolution before it lands
+    "resolve.verify_command": "claude -p {prompt} --allowedTools Read Glob Grep",
     "consensus.window": "0",           # seconds parties may object to an auto-resolution before it lands
+    "test.retries": "1",               # re-runs of a failing test suite; a pass on retry is flagged as flaky
+    "predict.tests": "true",           # also run the tests on predicted merges of overlapping agents
+    "regen": "",                       # generated files: "package-lock.json=npm install --package-lock-only; ..."
     "land.auto": "true",               # the daemon lands agents as soon as they're ready
     "push.auto": "false",              # push base to the remote after every landing
     # agents may run git (pushes from agent worktrees are blocked by braid's pre-push hook) and the tests
@@ -135,6 +140,7 @@ DEFAULTS = {
     "watch.interval": "5",
     "plan.command": "claude -p {prompt} --allowedTools Read Glob Grep",  # the planner for braid do (read-only)
     "plan.max_tasks": "6",
+    "plan.serialize": "true",          # tasks that own the same file run one after the other, not in parallel
     "agent.auto_resume": "2",          # times the daemon relaunches an agent that stopped with feedback to handle
 }
 
@@ -328,10 +334,45 @@ class Store:
         return True, others
 
     def release_lease(self, agent, path=None):
+        freed = [l["path"] for l in self.leases() if l["agent"] == agent and path in (None, l["path"])]
         if path is None:
             self.db.execute("DELETE FROM leases WHERE agent=?", (agent,))
         else:
             self.db.execute("DELETE FROM leases WHERE agent=? AND path=?", (agent, path))
+        for p in freed:
+            self._wake_waiters(p)
+
+    def wait_for_lease(self, agent, path):
+        """Queue agent for a lease it couldn't get. Returns its place in the queue (1 = next)."""
+        key = f"lease.wait.{path}"
+        queue = [a for a in json.loads(self.get_meta(key, "[]")) if a != agent] + [agent]
+        self.set_meta(key, json.dumps(queue))
+        return len(queue)
+
+    def _wake_waiters(self, path):
+        """Tell the first agent queued on an overlapping path that it's free (it then has to acquire it)."""
+        for row in self.db.execute("SELECT key, value FROM meta WHERE key LIKE 'lease.wait.%'").fetchall():
+            wanted = row["key"][len("lease.wait."):]
+            queue = [a for a in json.loads(row["value"]) if (self.agent(a) or {}).get("status") in
+                     ("active", "ready", "blocked", "paused", "exited")]
+            if not queue or not paths_overlap(wanted, path):
+                if not queue:
+                    self.db.execute("DELETE FROM meta WHERE key=?", (row["key"],))
+                continue
+            if any(l["kind"] == "hard" and l["agent"] != queue[0] for l in self.overlapping_leases(wanted)):
+                continue  # still held by someone else
+            self.post_note("braid", "lease", f"{wanted} is free now: call acquire_lease to take it and continue.",
+                           to=queue[0])
+            self.set_meta(row["key"], json.dumps(queue[1:]))
+
+    def mark_notes_read(self, agent, upto):
+        if upto > int(self.get_meta(f"notes.read.{agent}", "0")):
+            self.set_meta(f"notes.read.{agent}", upto)
+
+    def unread_notes(self, agent, topics=("conflict", "blocked")):
+        since = int(self.get_meta(f"notes.read.{agent}", "0"))
+        return [n for n in self.notes(since, for_agent=agent) if n["topic"] in topics and n["agent"] != agent
+                and n["to_agent"] == agent]
 
     def leases(self):
         self.db.execute("DELETE FROM leases WHERE expires_at < ?", (time.time(),))

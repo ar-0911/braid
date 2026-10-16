@@ -69,6 +69,7 @@ class Approvals(ApprovalCase):
         # new commits from the agent ask again
         self.edit(self.wt1, "return 10", "return 1  # kept")
         self.commit(self.wt1)
+        self.one.call("read_notes", {})  # it read why it was sent back
         self.assertTrue(self.one.call("ready_to_land", {"summary": "fixed"})["ok"])
         self.assertIn("#2", braid("land", cwd=self.repo, check=False).stdout)
 

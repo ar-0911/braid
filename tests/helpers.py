@@ -41,6 +41,8 @@ class RepoCase(unittest.TestCase):
         sh("git", "add", ".", cwd=self.repo)
         sh("git", "commit", "-qm", "base", cwd=self.repo)
         braid("init", cwd=self.repo)
+        braid("settings", "resolve.verify_command",
+              f"{sys.executable} {ROOT / 'tests' / 'fakes' / 'verifier.py'}", cwd=self.repo)
         if self.agents:
             braid("start", "--no-launch", "--no-daemon", *self.agents, cwd=self.repo)
         self.wt1 = self.repo.parent / "proj.agents" / "task-one"

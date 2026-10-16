@@ -31,7 +31,7 @@ Rules:
 
 The repository has {count} tracked files{listing_note}:
 {listing}
-{readme}
+{hotspots}{readme}
 Read any files you need to understand the codebase. Then answer with ONLY a JSON object, no other text:
 {{"tasks": [{{"id": "short-kebab-id", "title": "one line", "description": "the brief", "files": ["path/or/dir/"], "depends_on": []}}]}}
 """
@@ -39,6 +39,16 @@ Read any files you need to understand the codebase. Then answer with ONLY a JSON
 
 class PlanError(Exception):
     pass
+
+
+def hotspots(store, base, commits=300, top=8):
+    """Files changed most often in recent history: likely to be touched by several tasks."""
+    log = gitutil.out("log", "-n", str(commits), "--format=", "--name-only", base, cwd=store.repo)
+    counts = {}
+    for f in log.splitlines():
+        if f:
+            counts[f] = counts.get(f, 0) + 1
+    return [f for f, n in sorted(counts.items(), key=lambda kv: -kv[1])[:top] if n >= 3]
 
 
 def repo_context(store, base):
@@ -55,8 +65,12 @@ def repo_context(store, base):
 
 def ask_planner(store, goal, base, max_tasks):
     count, listing, note, readme = repo_context(store, base)
+    hot = hotspots(store, base)
+    hot_s = ("\nHotspot files, changed most often, that several tasks may want to edit: " + ", ".join(hot)
+             + ". Put changes to a hotspot in ONE task (often the early foundation task) instead of several.\n"
+             if hot else "")
     prompt = PLAN_PROMPT.format(goal=goal, max_tasks=max_tasks, count=count, listing=listing or "(empty repo)",
-                                listing_note=note, readme=readme)
+                                listing_note=note, readme=readme, hotspots=hot_s)
     cmd = store.cfg("plan.command").format(prompt=shlex.quote(prompt))
     try:
         proc = subprocess.run(cmd, shell=True, cwd=store.repo, capture_output=True, text=True, timeout=1200,
@@ -65,10 +79,10 @@ def ask_planner(store, goal, base, max_tasks):
         raise PlanError("the planner timed out")
     if proc.returncode != 0:
         raise PlanError(f"the planner failed: {(proc.stderr or proc.stdout).strip()[-500:]}")
-    return parse_plan(proc.stdout, max_tasks)
+    return parse_plan(proc.stdout, max_tasks, serialize=store.cfg_bool("plan.serialize"))
 
 
-def parse_plan(text, max_tasks=50):
+def parse_plan(text, max_tasks=50, serialize=True):
     """Pull the JSON plan out of the planner's answer and validate it. Returns tasks in a runnable order."""
     m = re.search(r"```(?:json)?\s*(\{.*\})\s*```", text, re.S)
     raw = m.group(1) if m else text[text.find("{"): text.rfind("}") + 1]
@@ -96,7 +110,37 @@ def parse_plan(text, max_tasks=50):
         t["depends_on"] = [d for d in t["depends_on"] if d in ids and d != t["id"]]
     if len(clean) > max_tasks:
         raise PlanError(f"the plan has {len(clean)} tasks, more than the limit of {max_tasks}")
-    return order(clean)
+    tasks = order(clean)
+    return order(serialize_shared(tasks)) if serialize else tasks
+
+
+def serialize_shared(tasks):
+    """Tasks that own the same file and could run at the same time are chained, earlier one first.
+
+    Only exact paths of files braid can't merge by function or class (config, JSON, YAML, docs...) count:
+    two tasks adding different functions to the same code file still merge cleanly, in parallel."""
+    from .structmerge import SUPPORTED_EXT
+    def reaches(src, dst):
+        stack, seen = [src], set()
+        while stack:
+            cur = stack.pop()
+            if cur == dst:
+                return True
+            if cur not in seen:
+                seen.add(cur)
+                stack += by_id[cur]["depends_on"]
+        return False
+
+    by_id = {t["id"]: t for t in tasks}
+    for i, early in enumerate(tasks):
+        mine = {f for f in early["files"] if not f.endswith("/") and not any(c in f for c in "*?[")
+                and "." + f.rsplit(".", 1)[-1] not in SUPPORTED_EXT}
+        for late in tasks[i + 1:]:
+            if mine & set(late["files"]) and not reaches(late["id"], early["id"]) \
+                    and not reaches(early["id"], late["id"]):
+                late["depends_on"].append(early["id"])
+                late.setdefault("serialized_after", []).append(early["id"])
+    return tasks
 
 
 def order(tasks):

@@ -74,6 +74,7 @@ class Landing(RepoCase):
         (self.wt2 / "m.py").write_text(self.show("main").replace("return 10", "return 110"))
         sh("git", "add", "m.py", cwd=self.wt2)
         sh("git", "commit", "-qm", "resolve", cwd=self.wt2)
+        self.two.call("read_notes", {})  # it read why it was blocked
         self.assertTrue(self.two.call("ready_to_land", {"summary": "resolved"})["ok"])
         r = braid("land", cwd=self.repo)
         self.assertIn("landed  task-two", r.stdout)

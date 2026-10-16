@@ -3,6 +3,7 @@ import os
 import shutil
 import subprocess
 import tempfile
+from functools import lru_cache
 from pathlib import Path
 
 
@@ -80,24 +81,61 @@ def snapshot_worktree(worktree):
     )
 
 
+def worktree_fingerprint(worktree):
+    """A cheap fingerprint of a worktree's state: HEAD, git status, and the stat of every changed file.
+
+    Equal fingerprints mean the snapshot would be the same, so it can be skipped. Uses --no-optional-locks
+    so this never takes the agent's index lock while it is working.
+    """
+    head = rev("HEAD", cwd=worktree)
+    rc, status = git("--no-optional-locks", "status", "--porcelain", "-z", "--untracked-files=all",
+                     cwd=worktree, check=False)
+    if rc != 0:
+        return None
+    stats = []
+    for entry in status.split("\0"):
+        path = entry[3:]
+        if not path:
+            continue
+        try:
+            st = os.stat(Path(worktree) / path)
+            stats.append(f"{path}:{st.st_mtime_ns}:{st.st_size}")
+        except OSError:
+            stats.append(f"{path}:gone")
+    return head + "\n" + status + "\n" + "\n".join(stats)
+
+
 def changed_paths(base, commit, cwd=None):
     """Paths changed on `commit` since its merge-base with `base`."""
     mb = out("merge-base", base, commit, cwd=cwd)
     if not mb:
         return set()
-    names = out("diff", "--name-only", "--no-renames", mb, commit, cwd=cwd)
-    return {n for n in names.splitlines() if n}
+    return set(_diff_names(mb, commit, str(cwd)))
+
+
+@lru_cache(maxsize=1024)
+def _diff_names(a, b, cwd):
+    return tuple(n for n in out("diff", "--name-only", "--no-renames", a, b, cwd=cwd).splitlines() if n)
 
 
 def merge_preview(a, b, cwd=None):
-    """Simulate merging a and b in memory. Returns (clean: bool, conflicted_paths: list, messages: str)."""
+    """Simulate merging a and b in memory. Returns (clean: bool, conflicted_paths: list)."""
+    _, clean, files = merge_result(a, b, cwd)
+    return clean, list(files)
+
+
+@lru_cache(maxsize=1024)
+def merge_result(a, b, cwd=None):
+    """(merged tree OID, clean, conflicted paths) for merging commits a and b, computed in memory.
+
+    Cached: commits never change, so a pair of unchanged snapshots is only merged once.
+    """
     rc, stdout = git("merge-tree", "--write-tree", "--name-only", "--no-messages", a, b,
                      cwd=cwd, check=False)
     if rc not in (0, 1):
         raise GitError(f"merge-tree {a} {b} failed with exit {rc}")
     lines = stdout.splitlines()
-    files = [l for l in lines[1:] if l]  # first line is the merged tree OID
-    return rc == 0, files
+    return lines[0] if lines else "", rc == 0, tuple(l for l in lines[1:] if l)
 
 
 def is_clean(worktree):
