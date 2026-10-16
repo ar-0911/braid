@@ -161,8 +161,8 @@ class Channels(ApprovalCase):
         self.calls, self.replies = [], {}
         self._http = notify._http
 
-        def fake(url, data=None, auth=None, timeout=20):
-            self.calls.append((url, data, auth))
+        def fake(url, data=None, auth=None, timeout=20, **kw):
+            self.calls.append((url, data if data is not None else kw.get("json_body"), auth or kw.get("bearer")))
             for key, value in self.replies.items():
                 if key in url:
                     return value() if callable(value) else value
@@ -217,3 +217,25 @@ class Channels(ApprovalCase):
         a = approve.get(self.store, 1)
         self.assertEqual((a["status"], a["decided_by"]), ("rejected", "Telegram"))  # stranger's yes ignored
         self.assertEqual(self.store.get_meta("approve.telegram.offset"), "9")
+
+    def test_cloudflare_worker_hosts_page_and_carries_the_yes(self):
+        self.ready(self.one, self.wt1, "return 1", "return 10")
+        braid("land", cwd=self.repo, check=False)
+        self.store.set_cfg("approve.channels", "cloudflare,telegram")
+        self.store.set_cfg("approve.cloudflare.url", "https://braid.example.workers.dev/")
+        notify.set_secret(self.store, "BRAID_RELAY_KEY", "k")
+        a = approve.get(self.store, 1)
+        self.assertEqual(notify.send_request(self.store, a), ["cloudflare", "telegram"])
+        url, body, key = self.calls[0]
+        rk = notify.remote_key(self.store, a)
+        self.assertEqual((url, key, body["key"]), ("https://braid.example.workers.dev/api/approvals", "k", rk))
+        self.assertIn(f"/a/{rk}/decide", body["html"])
+        link = f"https://braid.example.workers.dev/a/{rk}?t={a['token']}"
+        self.assertIn(link, body["email"]["text"])
+        self.assertIn(link, self.calls[1][1]["reply_markup"])  # other channels link to the worker's page
+        self.store.set_cfg("approve.channels", "cloudflare")
+        self.replies[f"/api/approvals/{rk}"] = {"status": "approved", "decided_by": "email", "comment": ""}
+        self.assertEqual(len(notify.poll(self.store, force=True)), 1)
+        self.assertEqual(approve.get(self.store, 1)["status"], "landed")
+        put = [c for c in self.calls if c[1] and c[1].get("status") == "landed"]
+        self.assertEqual(len(put), 1)  # the page was told how it ended

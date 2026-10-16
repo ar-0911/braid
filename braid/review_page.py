@@ -98,8 +98,10 @@ def _tests_chip(t):
     return f'<span class="chip ok">tests passed{n}</span>' if t["passed"] else '<span class="chip bad">tests failed</span>'
 
 
-def render(store, a, mode="web", url=""):
-    """mode: web (interactive), static (a saved file), email (an HTML email body)."""
+def render(store, a, mode="web", url="", page_id=None):
+    """mode: web (interactive), static (a saved file), email (an HTML email body).
+    page_id is the approval's name in page links (the worker names it differently)."""
+    page_id = page_id or a["id"]
     r = a["report"]
     risk_cls = {"low": "ok", "medium": "warn", "high": "bad"}.get(r["risk"], "")
     status = a["status"]
@@ -114,7 +116,7 @@ def render(store, a, mode="web", url=""):
                  f"{time.strftime('%d %b %H:%M', time.localtime(a['created_at']))}</div>")
     parts.append(f"<h1>{_e(r['title'])}</h1>")
     chips = [_tests_chip(r["tests"]), f"<span class='chip {risk_cls}'>{_e(r['risk'])} risk</span>",
-             f"<span class='chip'>{len(r['files'])} files · <span class='a'>+{r['added']}</span> "
+             f"<span class='chip'>{len(r['files'])} file{'s' * (len(r['files']) != 1)} · <span class='a'>+{r['added']}</span> "
              f"<span class='d'>-{r['removed']}</span></span>"]
     chips += [f"<span class='chip ok'>reviewed by {_e(x)}</span>" for x in r["reviewers"]]
     if r.get("resolution"):
@@ -185,9 +187,9 @@ def render(store, a, mode="web", url=""):
         parts.append("<h2>Commits</h2><div class='card'><code>" + "<br>".join(_e(c) for c in r["commits"])
                      + "</code></div>")
     if mode == "web":
-        parts.append(f"<p class='meta'><a href='/a/{a['id']}/raw.diff{q}'>Raw diff</a></p>")
+        parts.append(f"<p class='meta'><a href='/a/{page_id}/raw.diff{q}'>Raw diff</a></p>")
     if mode == "web" and status == "pending":
-        parts.append(f"<div class='bar'><form method='post' action='/a/{a['id']}/decide'>"
+        parts.append(f"<div class='bar'><form method='post' action='/a/{page_id}/decide'>"
                      f"<input type='hidden' name='t' value='{_e(a['token'])}'>"
                      f"<input type='text' name='comment' placeholder='Reason, if sending back'>"
                      f"<button class='no' name='action' value='reject'>Send back</button>"

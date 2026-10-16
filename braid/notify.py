@@ -5,6 +5,8 @@
   computer from the internet.
 - telegram: a bot with Approve / Send back buttons; button presses are read with getUpdates.
 - command: any shell command, for ntfy, Slack webhooks and so on. Send only.
+- cloudflare: your own Cloudflare Worker (cloudflare/ in this repo) hosts the review page, emails you, and records
+  your click or reply; braid uploads each request and polls the worker for the answer.
 
 Secrets come from the environment or from `braid approvals secret NAME VALUE` (.git/braid/secrets.json, mode 600).
 """
@@ -16,6 +18,7 @@ import imaplib
 import json
 import os
 import re
+import secrets as _secrets
 import shlex
 import smtplib
 import ssl
@@ -26,7 +29,7 @@ import urllib.parse
 import urllib.request
 from email.message import EmailMessage
 
-SECRETS = ("BRAID_SMTP_PASSWORD", "TWILIO_ACCOUNT_SID", "TWILIO_AUTH_TOKEN", "BRAID_TELEGRAM_TOKEN")
+SECRETS = ("BRAID_RELAY_KEY", "BRAID_SMTP_PASSWORD", "TWILIO_ACCOUNT_SID", "TWILIO_AUTH_TOKEN", "BRAID_TELEGRAM_TOKEN")
 YES = {"yes", "y", "approve", "approved", "ok", "lgtm", "ship", "ship it", "land", "👍", "✅"}
 NO = {"no", "n", "reject", "rejected", "back", "send back", "nope", "👎", "❌"}
 
@@ -73,6 +76,8 @@ def channels(store):
 
 def review_url(store, a):
     from . import review_page
+    if "cloudflare" in channels(store) and store.cfg("approve.cloudflare.url"):
+        return f"{store.cfg('approve.cloudflare.url').rstrip('/')}/a/{remote_key(store, a)}?t={a['token']}"
     base = review_page.public_url(store)
     return f"{base}/a/{a['id']}?t={a['token']}" if base else ""
 
@@ -87,12 +92,13 @@ def short_text(store, a, limit=1500, fence="```", hint=True):
         tests = "passed" + (f" ({t['counts']['passed']} tests)" if t.get("counts") else "")
     else:
         tests = "FAILED"
+    n = len(r["files"])
     lines = [f"braid #{a['id']}: {r['agent']} wants to land on {r['base']}",
              r["title"], "",
              r["summary"], "",
              f"Impact ({r['risk']} risk): {r['impact']}",
              f"Tests: {tests}" + (f". Reviewed by {', '.join(r['reviewers'])}" if r["reviewers"] else ""),
-             f"{len(r['files'])} files, +{r['added']} -{r['removed']}"]
+             f"{n} file{'s' * (n != 1)}, +{r['added']} -{r['removed']}"]
     url = review_url(store, a)
     tail = []
     if url:
@@ -118,7 +124,7 @@ def subject(a):
 def send_request(store, a):
     """Send a pending approval on every configured channel. Returns the channels that worked."""
     sent = []
-    for ch in channels(store):
+    for ch in sorted(channels(store), key=lambda c: c != "cloudflare"):  # upload the page before linking to it
         try:
             SENDERS[ch](store, a)
             sent.append(ch)
@@ -141,15 +147,20 @@ def send_text(store, text, only=("whatsapp", "telegram", "command")):
                 store.event("notify", f"{ch} failed: {e}")
 
 
-def _http(url, data=None, auth=None, timeout=20):
-    headers = {}
+def _http(url, data=None, auth=None, timeout=20, json_body=None, bearer=None, method=None):
+    headers = {"User-Agent": "braid"}
     if auth:
         headers["Authorization"] = "Basic " + base64.b64encode(f"{auth[0]}:{auth[1]}".encode()).decode()
+    if bearer:
+        headers["Authorization"] = f"Bearer {bearer}"
     body = None
     if data is not None:
         body = urllib.parse.urlencode(data).encode()
         headers["Content-Type"] = "application/x-www-form-urlencoded"
-    req = urllib.request.Request(url, data=body, headers=headers)
+    if json_body is not None:
+        body = json.dumps(json_body).encode()
+        headers["Content-Type"] = "application/json"
+    req = urllib.request.Request(url, data=body, headers=headers, method=method)
     try:
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             return json.loads(resp.read().decode() or "{}")
@@ -267,6 +278,70 @@ def text_telegram(store, text):
     _telegram(store, "sendMessage", chat_id=store.cfg("approve.telegram.chat_id"), text=text[:4000])
 
 
+# ---- cloudflare (your own worker, see cloudflare/)
+
+def _relay(store):
+    url, key = store.cfg("approve.cloudflare.url").rstrip("/"), secret(store, "BRAID_RELAY_KEY")
+    if not (url and key):
+        raise ChannelError("set approve.cloudflare.url and braid approvals secret BRAID_RELAY_KEY")
+    return url, key
+
+
+def remote_key(store, a):
+    """The approval's name on the worker: unique per repo, so one worker can serve several repos."""
+    rid = store.get_meta("approve.repo_id")
+    if not rid:
+        rid = _secrets.token_hex(4)
+        store.set_meta("approve.repo_id", rid)
+    return f"{rid}-{a['id']}"
+
+
+def send_cloudflare(store, a):
+    from . import review_page
+    url, key = _relay(store)
+    link = review_url(store, a)
+    r = _http(f"{url}/api/approvals", bearer=key, timeout=60, json_body={
+        "key": remote_key(store, a), "code": a["code"], "token": a["token"], "diff": a["diff"][:1_000_000],
+        "html": review_page.render(store, a, mode="web", page_id=remote_key(store, a)),
+        "email": {"subject": subject(a), "text": short_text(store, a, limit=100000),
+                  "html": review_page.render(store, a, mode="email", url=link)}})
+    if not str(r.get("email", "")).startswith(("sent", "not requested")):
+        store.event("notify", f"worker email for approval #{a['id']}: {r.get('email')}", a["agent"])
+
+
+def update_remote(store, a):
+    """Tell the worker how it ended, so the review page shows it."""
+    from . import review_page
+    if "cloudflare" not in channels(store):
+        return
+    try:
+        url, key = _relay(store)
+        _http(f"{url}/api/approvals/{remote_key(store, a)}", bearer=key, method="PUT", timeout=60,
+              json_body={"status": a["status"],
+                                    "html": review_page.render(store, a, mode="web", page_id=remote_key(store, a))})
+    except Exception as e:
+        store.event("notify", f"updating the review page for #{a['id']} failed: {e}", a["agent"])
+
+
+def poll_cloudflare(store):
+    from . import approve
+    url, key = _relay(store)
+    out = []
+    for a in approve.all_approvals(store, "pending"):
+        try:
+            r = _http(f"{url}/api/approvals/{remote_key(store, a)}", bearer=key)
+        except ChannelError as e:
+            if "HTTP 404" in str(e):
+                continue  # never uploaded (worker was down); braid approve still works
+            raise
+        if r.get("status") in ("approved", "rejected"):
+            a, message = approve.decide(store, a["id"], r["status"] == "approved", r.get("decided_by") or "web",
+                                        r.get("comment") or "")
+            send_text(store, f"braid #{a['id']}: {message}")
+            out.append(message)
+    return out
+
+
 # ---- command
 
 def send_command(store, a):
@@ -289,7 +364,7 @@ def _command(store, message, **extra):
         raise ChannelError(f"exit {proc.returncode}: {(proc.stderr or proc.stdout)[-300:]}")
 
 
-SENDERS = {"email": send_email, "whatsapp": send_whatsapp, "telegram": send_telegram, "command": send_command}
+SENDERS = {"cloudflare": send_cloudflare, "email": send_email, "whatsapp": send_whatsapp, "telegram": send_telegram, "command": send_command}
 TEXT_SENDERS = {"whatsapp": text_whatsapp, "telegram": text_telegram, "command": text_command}
 
 
@@ -464,4 +539,4 @@ def telegram_chat_ids(store):
             for u in _telegram(store, "getUpdates") if "message" in u}
 
 
-POLLERS = {"email": poll_email, "whatsapp": poll_whatsapp, "telegram": poll_telegram}
+POLLERS = {"cloudflare": poll_cloudflare, "email": poll_email, "whatsapp": poll_whatsapp, "telegram": poll_telegram}

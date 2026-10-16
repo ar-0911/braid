@@ -97,12 +97,22 @@ def test_channels(store):
                 msg.set_content("braid can reach you here. Approval requests will look like a summary, "
                                 "the diff or a review link, and a YES/NO to reply with.")
                 notify._smtp_send(host, port, user, password, msg)
+            elif ch == "cloudflare":
+                url, key = notify._relay(store)
+                try:
+                    notify._http(f"{url}/api/approvals/braid-test", bearer=key)
+                except notify.ChannelError as e:
+                    if "HTTP 404" not in str(e):  # 404 = signed in fine, no such approval
+                        raise
             else:
                 notify.TEXT_SENDERS[ch](store, "braid can reach you here. Approval requests will arrive like this; "
                                                "reply YES to land, NO and a reason to send work back.")
             print(f"  ok  {ch}")
         except Exception as e:
             print(f"  !!  {ch}: {e}")
+    if "cloudflare" in chans:
+        print(f"review pages: {store.cfg('approve.cloudflare.url')}/a/...")
+        return
     print("review page: " + (review_page.public_url(store) or "not reachable from your phone yet "
                              "(set approve.public_url or approve.tunnel cloudflared, and run the watcher)"))
 

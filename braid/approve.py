@@ -19,7 +19,8 @@ from .store import DEFAULTS
 
 DEFAULTS.update({
     "approve.required": "no",          # yes: every landing waits for a human yes
-    "approve.channels": "",            # comma list of: email, whatsapp, telegram, command
+    "approve.channels": "",            # comma list of: cloudflare, email, whatsapp, telegram, command
+    "approve.cloudflare.url": "",      # your braid worker, e.g. https://braid-approvals.you.workers.dev
     "approve.summary_command": "claude -p {prompt}",  # writes the summary; empty for the built-in one
     "approve.inline_diff_lines": "40",  # diffs up to this many lines go in the message itself
     "approve.push": "true",            # push the base branch after an approved landing
@@ -157,6 +158,7 @@ def decide(store, ref, approve_it, by, comment="", apply=True):
         a = get(store, a["id"])
         land.block(store, a["agent"], rejection_message(a))  # the watcher relaunches the agent to address it
         _set(store, a["id"], result="sent back to the agent")
+        _report_back(store, a["id"])
         gitutil.git("update-ref", "-d", f"refs/braid/approvals/{a['agent']}", cwd=store.repo, check=False)
         return get(store, a["id"]), f"#{a['id']} sent back to {a['agent']}"
     if not apply:
@@ -169,9 +171,11 @@ def apply_approved(store, aid):
     a = get(store, aid)
     r = land.land(store, a["agent"], push=store.cfg_bool("approve.push"))
     if r.ok:
-        landed(store, aid, r.message)
+        if get(store, aid)["status"] != "landed":
+            landed(store, aid, r.message)
     elif not r.waiting:
         _set(store, aid, status="failed", result=r.message)
+        _report_back(store, aid)
     else:
         _set(store, aid, result=r.message)
     return get(store, aid), r.message
@@ -180,6 +184,12 @@ def apply_approved(store, aid):
 def landed(store, aid, message):
     _set(store, aid, status="landed", result=message)
     gitutil.git("update-ref", "-d", f"refs/braid/approvals/{get(store, aid)['agent']}", cwd=store.repo, check=False)
+    _report_back(store, aid)
+
+
+def _report_back(store, aid):
+    from . import notify
+    notify.update_remote(store, get(store, aid))
 
 
 # ------------------------------------------------------------------ report

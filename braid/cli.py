@@ -622,7 +622,7 @@ def cmd_watch(args):
     interval = args.interval or float(store.cfg("watch.interval"))
     print(f"braid watching every {interval}s", flush=True)
     server = None
-    if store.cfg_bool("approve.required"):  # serve the review pages linked from approval requests
+    if store.cfg_bool("approve.required") and "cloudflare" not in notify.channels(store):  # serve review pages
         try:
             server = approvals_cli.review_page.ReviewServer(store).start()
             print(f"review pages at {server.url()}", flush=True)
