@@ -53,6 +53,32 @@ braid start --base feature/checkout "order emails"
 
 Every agent has its own base branch. braid creates the branch from your current base if it doesn't exist, agents branch from it, conflicts are only predicted between agents on the same base, and work lands on `feature/checkout`, never `main`. When the feature is done, merge or PR it to `main` as one unit.
 
+### Approve landings from your phone: WhatsApp, Telegram or email
+
+```sh
+braid settings approve.required yes
+braid settings approve.channels whatsapp,email     # any of: whatsapp, telegram, email, command
+braid approvals test                               # sends a test message on each channel
+```
+
+Now nothing lands until you say yes. Once an agent's work has passed review, conflict resolution and tests, braid stops just before moving the base branch and messages you:
+
+- a summary of what changed and **how it affects you** (written by `approve.summary_command`, Claude by default, with a built-in fallback), which functions changed and where else they're used, the risk, and the test results;
+- the diff itself when it's small (`approve.inline_diff_lines`, default 40), otherwise a link to a **review page** with all of that plus the full, colored diff and **Land it** / **Send back** buttons.
+
+Reply `YES` (or `NO` and a reason), tap the button, or run `braid approve` / `braid reject -m "why"`. A yes lands exactly the merge commit you were shown and pushes it (`approve.push`). A no sends the work back to its agent with your reason, and the watcher relaunches it to fix it.
+
+| channel | you need | set up |
+|---|---|---|
+| WhatsApp | a [Twilio](https://www.twilio.com/console) account (free trial; join the WhatsApp sandbox from your phone) | `braid approvals secret TWILIO_ACCOUNT_SID`, `braid approvals secret TWILIO_AUTH_TOKEN`, `braid settings approve.whatsapp.to +447700900123` |
+| Telegram | a bot from @BotFather (free) | `braid approvals secret BRAID_TELEGRAM_TOKEN`, message the bot, `braid approvals telegram-id` |
+| email | an SMTP/IMAP login, e.g. a Gmail [app password](https://myaccount.google.com/apppasswords) | `braid settings approve.email.to you@x.com`, `braid settings approve.email.user you@gmail.com`, `braid approvals secret BRAID_SMTP_PASSWORD` |
+| anything else | a command | `braid settings approve.command "curl -d {message} ntfy.sh/my-topic"` |
+
+Replies are read by polling (Twilio's message log, Telegram's getUpdates, IMAP), so nothing on the internet needs to reach your machine to get the yes. The review page is served by the watcher on `approve.port` (8765). To open it from your phone, set `approve.tunnel cloudflared` (free `https://…trycloudflare.com` link, no account; install `cloudflared`) or point `approve.public_url` at your own Tailscale/ngrok address. Every link carries a secret token. Without either, emails attach the review page and messages say to run `braid approvals show <id>`.
+
+WhatsApp note: Twilio only delivers free-form messages within 24 hours of your last message to it (sandbox included). For approvals at any time, create a WhatsApp template in Twilio with variables `{{1}}` title, `{{2}}` summary, `{{3}}` link, `{{4}}` reply code and set `approve.whatsapp.content_sid`, or use Telegram or email, which have no such window.
+
 ### From your own Claude session: `braid connect`
 
 `braid connect` registers braid's MCP server with Claude Code (`--scope local|project|user`). Your own session then has lead-only tools: `delegate` (plan a goal and start agents, like `braid do`), `start_agents`, and `team_status`. So you can say "split this up and get some agents on it" in your normal chat. Agents themselves cannot start more agents.
@@ -74,6 +100,7 @@ Every agent has its own base branch. braid creates the branch from your current 
 | update an agent with latest main | `braid sync <agent>` / `braid sync --all` |
 | a stuck agent | `braid resume <agent> "what to do"` |
 | stop / abandon | `braid stop <agent>` / `braid stop --all`, `braid drop <agent> [--delete]` |
+| changes waiting for you | `braid approvals`, `braid approvals show <id>`, `braid approve [id]`, `braid reject [id] -m "why"` |
 | tidy up | `braid prune` (removes worktrees and branches of landed agents) |
 | settings | `braid settings`, `braid settings <key> <value>` |
 | anything git does | `braid <git command>`, e.g. `braid log --oneline`, `braid commit -am "x"` |
@@ -141,12 +168,20 @@ Every landing is a merge commit with `Braid-Agent:` and `Reviewed-by:` trailers,
 | `watch.interval` | `5` | seconds between watcher passes |
 | `plan.command` | Claude Code, headless, read-only tools | the planner for `braid do`; `{prompt}` is filled in |
 | `plan.max_tasks` | `6` | most tasks a plan may have (`--max-agents` overrides) |
+| `approve.required` | `no` | `yes`: every landing waits for your yes |
+| `approve.channels` | (none) | `whatsapp`, `telegram`, `email`, `command`, comma separated |
+| `approve.summary_command` | `claude -p {prompt}` | writes the summary and impact; empty for the built-in one |
+| `approve.inline_diff_lines` | `40` | bigger diffs get a review link instead of being inlined |
+| `approve.push` | `true` | push after an approved landing |
+| `approve.tunnel` / `approve.public_url` | (none) | `cloudflared`, or your own URL, so the review page opens on your phone |
+| `approve.whatsapp.*`, `approve.telegram.chat_id`, `approve.email.*`, `approve.command` | | channel details, see above; secrets go in `braid approvals secret` |
 
 Use a different agent CLI: `braid settings agent.command "my-agent --mcp {mcp_config} --task {prompt}"`.
 
 ## Where things live
 
 - `.git/braid/state.db`: shared memory (SQLite), shared by all worktrees.
+- `.git/braid/secrets.json`: channel passwords and tokens (mode 600; environment variables of the same name win).
 - `.git/braid/logs/<agent>.log`: each agent's output. `.git/braid/daemon.log`: the watcher.
 - `<repo>.agents/<agent>/`: agent worktrees, next to your repo. `<repo>.agents/.integration/` is the landing worktree.
 - `refs/braid/wip/<agent>`: latest snapshot of each agent's work, including uncommitted changes.
@@ -158,7 +193,7 @@ Use a different agent CLI: `braid settings agent.command "my-agent --mcp {mcp_co
 python -m unittest discover -s tests -v
 ```
 
-46 tests, including end-to-end runs where `braid start` and `braid do` launch real processes (scripted fake agents) and the watcher reviews, resolves and lands them.
+56 tests, including end-to-end runs where `braid start` and `braid do` launch real processes (scripted fake agents) and the watcher reviews, resolves and lands them.
 
 ## Status and roadmap
 
