@@ -97,7 +97,12 @@ class Server:
             return {"ok": True, "leased_by_others": clashes}
         if name == "acquire_lease":
             ok, others = s.acquire_lease(me, args["path"], args.get("kind", "soft"), args.get("ttl_seconds", 3600))
-            return {"ok": ok, "other_holders": others}
+            if ok:
+                return {"ok": True, "other_holders": others}
+            place = s.wait_for_lease(me, args["path"])
+            return {"ok": False, "other_holders": others, "queued": place,
+                    "next": "you're in the queue for it; braid sends you a note when it's free. Work on other "
+                            "parts meanwhile, or post_note the holder to coordinate."}
         if name == "release_lease":
             s.release_lease(me, args.get("path"))
             return {"ok": True}
@@ -105,7 +110,10 @@ class Server:
             s.post_note(me, args["topic"], args["text"], args.get("to"))
             return {"ok": True}
         if name == "read_notes":
-            return s.notes(args.get("since_id", 0), args.get("topic"), for_agent=me)
+            notes = s.notes(args.get("since_id", 0), args.get("topic"), for_agent=me)
+            if notes and not args.get("topic"):
+                s.mark_notes_read(me, notes[-1]["id"])
+            return notes
         if name == "sync":
             ok, msg, files = land.sync(s, me)
             return {"ok": ok, "message": msg, "conflicted_files": files}
@@ -113,6 +121,19 @@ class Server:
             a = self.me()
             if not gitutil.is_clean(a["worktree"]):
                 return {"ok": False, "error": "you have uncommitted changes; commit them first"}
+            unread = s.unread_notes(me)
+            if unread:  # make sure warnings were seen before claiming to be done
+                s.mark_notes_read(me, unread[-1]["id"])
+                return {"ok": False, "error": "you have unread warnings about your work. Read them, deal with "
+                                              "them, then call ready_to_land again.",
+                        "notes": [{"id": n["id"], "topic": n["topic"], "text": n["text"]} for n in unread]}
+            predict.check(s)
+            behind = [r for r in s.risks(me) if r["a"] == me and r["b"].startswith("@")
+                      and r["severity"] == "semantic"]  # text conflicts are left to the resolver
+            if behind:
+                return {"ok": False, "error": f"your work doesn't fit {behind[0]['b'][1:]} as it is now "
+                                              f"({behind[0]['severity']}: {', '.join(behind[0]['files'])}). "
+                                              "Call sync, fix it, commit, then call ready_to_land again."}
             s.update_agent(me, summary=args["summary"])
             s.set_status(me, "ready", args["summary"])
             s.post_note(me, "review", f"{me} is ready to land: {args['summary']}. Please review with show_diff.")
