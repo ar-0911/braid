@@ -41,7 +41,9 @@ def common_dir(cwd=None):
 
 
 def rev(ref, cwd=None):
-    return out("rev-parse", "--verify", "--quiet", ref + "^{commit}", cwd=cwd)
+    """Commit OID for ref, or "" if it doesn't exist."""
+    rc, stdout = git("rev-parse", "--verify", "--quiet", ref + "^{commit}", cwd=cwd, check=False)
+    return stdout.strip() if rc == 0 else ""
 
 
 def snapshot_worktree(worktree):
@@ -51,7 +53,7 @@ def snapshot_worktree(worktree):
     Returns HEAD itself when there is nothing uncommitted.
     """
     head = rev("HEAD", cwd=worktree)
-    fd, tmp_index = tempfile.mkstemp(prefix="agit-index-")
+    fd, tmp_index = tempfile.mkstemp(prefix="braid-index-")
     os.close(fd)
     os.unlink(tmp_index)  # git wants to create it itself
     env = {"GIT_INDEX_FILE": tmp_index}
@@ -65,9 +67,9 @@ def snapshot_worktree(worktree):
     if tree == out("rev-parse", "HEAD^{tree}", cwd=worktree):
         return head
     return out(
-        "commit-tree", tree, "-p", head, "-m", "agit wip snapshot", cwd=worktree,
-        env={"GIT_AUTHOR_NAME": "agit", "GIT_AUTHOR_EMAIL": "agit@localhost",
-             "GIT_COMMITTER_NAME": "agit", "GIT_COMMITTER_EMAIL": "agit@localhost"},
+        "commit-tree", tree, "-p", head, "-m", "braid wip snapshot", cwd=worktree,
+        env={"GIT_AUTHOR_NAME": "braid", "GIT_AUTHOR_EMAIL": "braid@localhost",
+             "GIT_COMMITTER_NAME": "braid", "GIT_COMMITTER_EMAIL": "braid@localhost"},
     )
 
 
@@ -89,3 +91,34 @@ def merge_preview(a, b, cwd=None):
     lines = stdout.splitlines()
     files = [l for l in lines[1:] if l]  # first line is the merged tree OID
     return rc == 0, files
+
+
+def is_clean(worktree):
+    return out("status", "--porcelain", "--untracked-files=normal", cwd=worktree) == ""
+
+
+def current_branch(worktree):
+    rc, stdout = git("symbolic-ref", "--quiet", "--short", "HEAD", cwd=worktree, check=False)
+    return stdout.strip() if rc == 0 else None
+
+
+def worktrees(repo):
+    """List of dicts with path, head, branch for every worktree."""
+    result, cur = [], {}
+    for line in out("worktree", "list", "--porcelain", cwd=repo).splitlines() + [""]:
+        if not line:
+            if cur:
+                result.append(cur)
+            cur = {}
+        elif line.startswith("worktree "):
+            cur["path"] = line[9:]
+        elif line.startswith("HEAD "):
+            cur["head"] = line[5:]
+        elif line.startswith("branch "):
+            cur["branch"] = line[7:].removeprefix("refs/heads/")
+    return result
+
+
+def conflicted_files(worktree):
+    names = out("diff", "--name-only", "--diff-filter=U", cwd=worktree)
+    return [n for n in names.splitlines() if n]
