@@ -1,52 +1,146 @@
-# agit
+# braid
 
-Run several coding agents on one repo at the same time. Each gets its own branch and worktree; all of them share a memory and get warned about merge conflicts **while they are still working**, not at merge time.
-
-Milestone 1 of the design in [`../README.md`](../README.md). Python 3.10+, git 2.38+, no other dependencies.
-
-## Quick start
+**Run many coding agents on one repo at once, and braid their work back together.**
 
 ```sh
-# from inside any git repo
-export PYTHONPATH=/path/to/agit        # or: alias agit='PYTHONPATH=/path/to/agit python3 -m agit'
-python3 -m agit init                   # records base branch, installs pre-commit lease check
-python3 -m agit run "add OAuth login" "billing CSV export" --launch
-python3 -m agit watch                  # keep conflict predictions fresh (another terminal)
-python3 -m agit status                 # agents, leases, predicted conflicts, recent notes
+braid start "add OAuth login" "billing CSV export" "search filters"
 ```
 
-Without `--launch`, `run` prints the `claude` command to start each agent yourself (interactive).
+Each task gets its own agent, branch and worktree. The agents share a memory, see what the others are doing, get warned about merge conflicts *while they are still typing*, review each other's work, and braid lands it on `main`: merging code-aware, resolving what still clashes, running your tests, and pushing when you say so. Everything else is plain git: `braid commit`, `braid log`, `braid rebase` just run git.
 
-## What happens
+- No dependencies beyond Python 3.10+ and git 2.38+.
+- Agents are [Claude Code](https://claude.com/claude-code) sessions by default; any CLI agent can be plugged in.
+- All state lives inside your repo's `.git/`; nothing is uploaded anywhere.
 
-- `run` creates branch `agent/<name>` and worktree `<repo>.agents/<name>` per task, registers the agent, and writes an MCP config so that agent's Claude Code session gets the `agit` tools under its own identity.
-- `watch` / `check` / the `risks` tool snapshot every worktree (including **uncommitted** edits, via a throwaway index, so nothing in the agent's checkout changes), then dry-run merges between every pair of agents and against the base branch with `git merge-tree --write-tree`. Results:
-  - `CONFLICT`: git cannot merge these two as they are now.
-  - `OVERLAP`: same files touched, but they merge cleanly today.
-  - New conflicts are posted as notes, so both agents read about them mid-task.
-- The pre-commit hook blocks a commit that touches a file another agent holds a **hard** lease on, and warns on soft leases.
+---
 
-## Agent tools (MCP)
+## Install
 
-| tool | purpose |
+```sh
+pip install git+https://github.com/<you>/braid      # or, from a checkout: pip install .
+braid doctor                                          # checks git, python, the agent CLI
+```
+
+## Use it
+
+```sh
+cd my-project
+braid init --test "pytest -q"      # once: merge driver, hooks, rerere, test gate
+braid start "task one" "task two"  # launches agents + the background watcher
+braid status --live                # who's doing what, predicted conflicts, decisions
+braid feed -f                      # live activity feed
+braid ship                         # land everything that's ready, then push
+```
+
+That's the whole loop. While agents work, the watcher lands each one as soon as it is reviewed and its tests pass.
+
+### Everyday commands
+
+| you want to | run |
 |---|---|
-| `whoami` | own name, branch, worktree, task |
-| `peers` | other agents with their tasks, declared intents and leases |
-| `risks` | fresh conflict/overlap prediction for me |
-| `declare_intent` | files/globs I plan to change, and why |
-| `acquire_lease` / `release_lease` | claim files (soft = signal, hard = blocks others' commits) |
-| `post_note` / `read_notes` | shared notes: API changes, agreements, conflict alerts |
+| set up a repo (creates one in a plain folder) | `braid init [--base main] [--test "cmd"]` |
+| start agents | `braid start "task" ["task" ...]` (`--no-launch` to drive them yourself) |
+| see everything | `braid status [--live]` (also shows `git status` for where you are) |
+| activity / messages | `braid feed -f`, `braid chat`, `braid chat --post "use the v2 API" --to login` |
+| check conflicts now | `braid check` (exit 1 when a conflict is predicted, handy in scripts) |
+| review an agent yourself | `braid review login` then `--approve` or `--changes -m "why"` |
+| land work | `braid land [agent ...]` (all ready agents if none named) |
+| push | `braid push [--branches]` or `braid ship` (land + push) |
+| update an agent with latest main | `braid sync <agent>` / `braid sync --all` |
+| a stuck agent | `braid resume <agent> "what to do"` |
+| stop / abandon | `braid stop <agent>` / `braid stop --all`, `braid drop <agent> [--delete]` |
+| tidy up | `braid prune` (removes worktrees and branches of landed agents) |
+| settings | `braid settings`, `braid settings <key> <value>` |
+| anything git does | `braid <git command>`, e.g. `braid log --oneline`, `braid commit -am "x"` |
 
-## Where state lives
+`braid status` and `braid push` behave exactly like git's when you pass git flags or aren't in a braid repo.
 
-`<repo>/.git/agit/state.db` (SQLite, shared by all worktrees), WIP snapshots under `refs/agit/wip/<agent>`, agent configs/prompts/logs under `.git/agit/`.
+## How it works
+
+```
+ braid start "A" "B" "C"
+        |
+        v
+  +-------------+   MCP tools   +--------------------------------------------+
+  | agent A     |<------------->|  shared memory  (.git/braid/state.db)      |
+  | agent B     |               |  agents, intents, leases, notes, risks,    |
+  | agent C     |               |  reviews, decisions, activity feed         |
+  +------+------+               +--------------------^-----------------------+
+         | own branch + worktree each                |
+         v                                           |
+  +------------------------------------------+       |
+  | one .git: shared objects and refs        |<------+  watcher (every few seconds)
+  +------------------------------------------+       |   1. snapshot each worktree, even uncommitted
+                                                     |   2. dry-run merge every pair + vs main
+                                                     |   3. tell agents about new conflicts
+                                                     |   4. land ready agents through the queue
+                                                     |   5. relaunch agents that stopped with feedback
+```
+
+**1. Shared memory.** Agents get these tools over MCP: `peers`, `declare_intent`, `acquire_lease` / `release_lease`, `post_note` / `read_notes`, `risks`, `sync`, `ready_to_land`, `pending_reviews`, `show_diff`, `review`, `decisions`, `vote`. A hard lease makes the pre-commit hook refuse other agents' commits to that file; agents can't push at all (pre-push hook).
+
+**2. Early conflict prediction.** Every few seconds braid snapshots each worktree into a commit using a throwaway index (the agent's files and index are never touched), then runs `git merge-tree --write-tree` between every pair of agents and against `main`. That is git's real merge engine running in memory. A new conflict is posted to both agents, so they sort it out mid-task.
+
+**3. Code-aware merging.** `braid init` registers a git merge driver for Python and brace languages (JS/TS, Go, Rust, Java, Kotlin, C/C++, C#, Swift, PHP, Scala, Dart). It merges by function, class, method and import rather than by line, so two agents adding different functions, methods or imports to the same file merge cleanly. It works in every git merge in the repo, including the predictor's. Only an entity changed differently on both sides falls back to a line merge, and anything it can't parse falls back to plain git. `rerere` is on, so a resolution is replayed if the same conflict comes back.
+
+**4. Review.** When an agent finishes it calls `ready_to_land`; other agents see it in `pending_reviews` and approve or request changes. A review is tied to the exact commit, so new commits need a new review. `review.required`: `auto` (default: needs a peer's approval while a peer is still running), `yes`, `no`, or set `review.command` for an automatic reviewer.
+
+**5. Landing and auto-consensus.** The merge queue merges each ready agent into `main` in a private integration worktree:
+
+1. Merge with the code-aware driver and rerere. Most overlaps end here.
+2. Anything still conflicted goes to a **neutral resolver** (a separate agent; `resolve.command`). It is given both sides' tasks, declared intents and notes, and told to keep both intents.
+3. The **tests** (`test.command`) must pass on the merged result.
+4. The agents whose work is in the conflict are notified with a decision number and can `vote` accept or object during `consensus.window` seconds. An objection stops it.
+5. Otherwise `main` moves forward atomically. If `main` is checked out, it is fast-forwarded in place.
+6. If any step fails, the agent is marked **blocked** with the reason in its notes, and the watcher relaunches it to `sync` and fix it itself. The deterministic tie-break is *first to land wins; the later agent adapts*. After `agent.auto_resume` attempts it waits for you.
+
+Every landing is a merge commit with `Braid-Agent:` and `Reviewed-by:` trailers, so `git log` shows who did what and who checked it.
+
+**6. Push.** `braid push` / `braid ship` push `main` (and agent branches with `--branches`) to `remote` (default `origin`). Set `push.auto true` to push after every landing.
+
+## Settings
+
+| key | default | meaning |
+|---|---|---|
+| `base` | current branch at init | branch agents start from and land on |
+| `remote` | `origin` | where `push` goes |
+| `test.command` | (none) | must pass before anything lands; agents are allowed to run it |
+| `review.required` | `auto` | `auto`, `yes`, `no` |
+| `review.command` | (none) | automatic reviewer; `{prompt}` is filled in, must print `VERDICT: approve` or `VERDICT: changes` |
+| `resolve.command` | `claude -p {prompt} --permission-mode acceptEdits` | neutral conflict resolver |
+| `consensus.window` | `0` | seconds parties may object to a resolution before it lands |
+| `land.auto` | `true` | watcher lands agents as soon as they're ready |
+| `push.auto` | `false` | push after every landing |
+| `agent.command` | Claude Code, headless, with braid's MCP tools and git allowed | how agents are launched; `{prompt}`, `{mcp_config}`, `{name}` |
+| `agent.auto_resume` | `2` | relaunches for an agent that stopped with feedback to handle |
+| `watch.interval` | `5` | seconds between watcher passes |
+
+Use a different agent CLI: `braid settings agent.command "my-agent --mcp {mcp_config} --task {prompt}"`.
+
+## Where things live
+
+- `.git/braid/state.db`: shared memory (SQLite), shared by all worktrees.
+- `.git/braid/logs/<agent>.log`: each agent's output. `.git/braid/daemon.log`: the watcher.
+- `<repo>.agents/<agent>/`: agent worktrees, next to your repo. `<repo>.agents/.integration/` is the landing worktree.
+- `refs/braid/wip/<agent>`: latest snapshot of each agent's work, including uncommitted changes.
+- `.git/info/attributes` and `.git/info/exclude`: the merge driver and build junk ignores (local only, your `.gitignore` is untouched).
 
 ## Tests
 
 ```sh
-python3 -m unittest discover -s tests -v
+python -m unittest discover -s tests -v
 ```
 
-## Not yet (next milestones)
+39 tests, including an end-to-end run where `braid start` launches real processes (scripted fake agents) and the watcher reviews, resolves and lands them.
 
-Structural (AST) merge driver + rerere, automatic negotiation/consensus with a reviewer agent and test-based judging, merge queue that lands to the base branch and pushes.
+## Status and roadmap
+
+Milestones done: worktree launcher and shared memory (M1), code-aware merge (M2), review, resolution and consensus (M3), merge queue, sync and push (M4), git-compatible CLI and packaging (M5).
+
+Next ideas: entity-level merge inside classes for brace languages, a web dashboard, `braid pr` to open one pull request per landing, running agents in containers, and predicting *semantic* conflicts by running tests on the predicted merge.
+
+See [docs/design.md](docs/design.md) for the research and design behind this.
+
+## License
+
+MIT
