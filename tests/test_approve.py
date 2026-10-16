@@ -283,6 +283,18 @@ class RunMode(ApprovalCase):
         self.assertEqual(a["proposal_oid"], self.rev("braid-run/main"))
         self.assertTrue(a["report"]["task"].startswith("(1) "))  # both tasks listed
         self.assertEqual(len(self.messages()), 1)  # one message, not one per agent
+        self.assertEqual([g["name"] for g in a["report"]["agents"]], ["task-one", "task-two"])
+        one = a["report"]["agents"][0]
+        self.assertEqual((one["files"], one["added"]), (["m.py"], 1))
+        self.assertIn("return 10", one["diff"])
+        self.assertNotIn("x = 2", one["diff"])  # each agent's own share
+        page = review_page.render(self.store, a, mode="web")
+        self.assertIn("Agents in this run (2)", page)
+        self.assertIn("id='agent-task-two'", page)
+        card = review_page.render(self.store, a, mode="email", url="https://w.example/a/k")
+        self.assertIn("https://w.example/a/k#agent-task-one", card)
+        self.assertIn("Review the whole run and land", card)
+        self.assertIn("#agent-task-two", notify.email_text(self.store, a, "https://w.example/a/k"))
         braid("land", cwd=self.repo, check=False)
         self.assertEqual(len(approve.all_approvals(self.store)), 1)  # asks only once
         r = braid("approve", a["code"], cwd=self.repo)

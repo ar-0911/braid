@@ -136,13 +136,14 @@ def rejection_message(a):
 
 # ------------------------------------------------------------------ request
 
-def request(store, agent, base, base_oid, new_oid, tests, reviewers, resolution=None):
+def request(store, agent, base, base_oid, new_oid, tests, reviewers, resolution=None, extra=None):
     """Record a pending approval for landing new_oid, write its report and notify. Returns the approval."""
     ensure(store)
     head = gitutil.rev(agent["branch"], cwd=store.repo)
     gitutil.git("update-ref", _ref(agent["name"]), new_oid, cwd=store.repo)  # keep it from gc
     diff = gitutil.out("diff", "--find-renames", base_oid, new_oid, cwd=store.repo)
     report = build_report(store, agent, base, base_oid, new_oid, diff, tests, reviewers, resolution)
+    report.update(extra or {})
     code = "".join(secrets.choice(CODE_ALPHABET) for _ in range(4))
     cur = store.db.execute(
         "INSERT INTO approvals(agent, head_oid, base_oid, proposal_oid, status, token, code, report, diff, created_at)"
@@ -339,7 +340,8 @@ def fallback_summary(r):
     """A summary built from the facts alone, used when no model is configured or it fails."""
     n = len(r["files"])
     title = r["agent_summary"] or r["task"]
-    parts = [f"{r['agent']} worked on \"{r['task']}\" and changed {n} file{'s' * (n != 1)} "
+    who = "This run" if r["agent"].startswith("run:") else r["agent"]
+    parts = [f"{who} worked on \"{r['task']}\" and changed {n} file{'s' * (n != 1)} "
              f"(+{r['added']} -{r['removed']})."]
     by_change = {}
     for e in r["entities"]:

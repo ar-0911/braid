@@ -49,6 +49,17 @@ def _catch_up(store, staging, base):
     return ""
 
 
+def _agent_part(store, agent, base_oid):
+    """One agent's share of the run, for its own section on the review page and line in the email."""
+    head = gitutil.rev(agent["branch"], cwd=store.repo)
+    since = gitutil.out("merge-base", base_oid, head, cwd=store.repo)
+    files = approve.numstat(store, since, head)
+    diff = gitutil.out("diff", "--find-renames", since, head, cwd=store.repo)
+    return {"name": agent["name"], "task": agent["task"], "summary": agent.get("summary") or "",
+            "files": [f["path"] for f in files], "added": sum(f["added"] for f in files),
+            "removed": sum(f["removed"] for f in files), "diff": diff[:200_000]}
+
+
 def check(store):
     """Ask once for every finished run that hasn't been asked about. Returns messages for the feed."""
     if not (approve.required(store) and store.cfg("approve.mode") == "run"):
@@ -81,7 +92,8 @@ def check(store):
         ran = bool(store.cfg("test.command"))
         tests = (True, "every landing in this run passed its tests; the last one ran on this combined result"
                  if ran else "")
-        a = approve.request(store, pseudo, base, base_oid, new_oid, tests, [])
+        a = approve.request(store, pseudo, base, base_oid, new_oid, tests, [],
+                            extra={"agents": [_agent_part(store, x, base_oid) for x in agents]})
         messages.append(f"the run on {base} is done ({len(agents)} agent{'s' * (len(agents) != 1)}): "
                         + approve.waiting_message(a))
     return messages

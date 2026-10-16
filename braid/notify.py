@@ -126,12 +126,17 @@ def email_text(store, a, url):
     if not url:
         return short_text(store, a, limit=100000)
     r = a["report"]
-    return (f"{r['title']}\n\n{r['summary']}\n\nReview and land: {url}\n\n"
+    from .review_page import _anchor
+    agents = "".join(f"- {g['name']} (+{g['added']}/-{g['removed']}): {url}#{_anchor(g['name'])}\n"
+                     for g in r.get("agents") or [])
+    return (f"{r['title']}\n\n{r['summary']}\n\n" + (f"Agents in this run:\n{agents}\n" if agents else "")
+            + f"Review and land: {url}\n\n"
             f"Or reply yes to land it, or no and a reason to send it back.\n")
 
 
 def subject(a):
-    return f"[braid {a['code']}] Approve {a['agent']}: {a['report']['title']}"
+    who = f"the run on {a['report']['base']}" if a["agent"].startswith("run:") else a["agent"]
+    return f"[braid {a['code']}] Approve {who}: {a['report']['title']}"
 
 
 # ------------------------------------------------------------------ send

@@ -98,6 +98,51 @@ def _tests_chip(t):
     return f'<span class="chip ok">tests passed{n}</span>' if t["passed"] else '<span class="chip bad">tests failed</span>'
 
 
+def _who(r):
+    return "whole run" if r.get("agents") is not None and r["agent"].startswith("run:") else r["agent"]
+
+
+def _anchor(name):
+    return "agent-" + re.sub(r"[^A-Za-z0-9_-]", "-", name)
+
+
+def _email_agents(r, url, font):
+    """For a whole run: one row per agent, each linking to its own section of the review page."""
+    if not r.get("agents"):
+        return ""
+    rows = "".join(
+        f"<tr><td style='padding:10px 0;border-top:1px solid #e3e6ec;font-family:{font};font-size:14px;"
+        f"line-height:1.4'><a href='{_e(url)}#{_anchor(g['name'])}' style='color:#1d4ed8;font-weight:600;"
+        f"text-decoration:none'>{_e(g['name'])}</a>"
+        f" <span style='color:#1a7f45'>+{g['added']}</span> <span style='color:#c0392b'>-{g['removed']}</span>"
+        f"<div style='color:#5d6677'>{_e((g['summary'] or g['task'])[:160])}</div></td></tr>"
+        for g in r["agents"])
+    return (f"<tr><td style='padding:18px 24px 0;font-family:{font};color:#1d2330;font-size:14px;"
+            f"font-weight:700'>{len(r['agents'])} agent{'s' * (len(r['agents']) != 1)} in this run</td></tr>"
+            f"<tr><td style='padding:4px 24px 0'><table role='presentation' width='100%' cellpadding='0' "
+            f"cellspacing='0'>{rows}</table></td></tr>")
+
+
+def _page_agents(r):
+    """For a whole run: a section per agent with its task, summary and its own diff."""
+    if not r.get("agents"):
+        return ""
+    out = [f"<h2>Agents in this run ({len(r['agents'])})</h2>"]
+    for g in r["agents"]:
+        n = len(g["files"])
+        diffs = "".join(f"<div class='hk'>{_e(p)}</div>{h}" for p, h in _diff_html(g["diff"], 400).items())
+        out.append(
+            f"<div class='card' id='{_anchor(g['name'])}'><b>{_e(g['name'])}</b> "
+            f"<span class='meta'>{n} file{'s' * (n != 1)} · <span class='a'>+{g['added']}</span> "
+            f"<span class='d'>-{g['removed']}</span></span>"
+            f"<div class='meta' style='margin-top:4px'>Task: {_e(g['task'])}</div>"
+            + (f"<div style='margin-top:6px'>{_e(g['summary'])}</div>" if g["summary"] else "")
+            + (f"<details><summary>Its changes</summary><div class='diff'>{diffs}</div></details>" if diffs else "")
+            + "</div>")
+    out.append("<h2>The whole run</h2>")
+    return "".join(out)
+
+
 def render_email_card(a, url):
     """The approval email when there is a review page to link to: a short card and one button.
 
@@ -122,15 +167,17 @@ def render_email_card(a, url):
         f"<table role='presentation' width='100%' cellpadding='0' cellspacing='0' style='max-width:520px;"
         f"background:#ffffff;border-radius:12px;border:1px solid #e3e6ec'>"
         f"<tr><td style='padding:24px 24px 8px;font-family:{font};color:#5d6677;font-size:13px'>"
-        f"braid &middot; {_e(r['agent'])} &rarr; {_e(r['base'])}</td></tr>"
+        f"braid &middot; {_e(_who(r))} &rarr; {_e(r['base'])}</td></tr>"
         f"<tr><td style='padding:0 24px;font-family:{font};color:#1d2330;font-size:20px;font-weight:700;"
         f"line-height:1.3'>{_e(r['title'])}</td></tr>"
         f"<tr><td style='padding:10px 24px 0;font-family:{font};font-size:14px'>{facts}</td></tr>"
         f"<tr><td style='padding:14px 24px 0;font-family:{font};color:#1d2330;font-size:15px;line-height:1.5'>"
         f"{_e(r['summary'])}</td></tr>"
+        f"{_email_agents(r, url, font)}"
         f"<tr><td style='padding:24px'><a href='{_e(url)}' style='display:block;background:#1a7f45;"
         f"color:#ffffff;text-align:center;padding:14px 18px;border-radius:8px;text-decoration:none;"
-        f"font-family:{font};font-size:16px;font-weight:600'>Review and land</a></td></tr>"
+        f"font-family:{font};font-size:16px;font-weight:600'>"
+        f"{'Review the whole run and land' if r.get('agents') else 'Review and land'}</a></td></tr>"
         f"<tr><td style='padding:0 24px 24px;font-family:{font};color:#5d6677;font-size:13px;line-height:1.5'>"
         f"The page shows what changed, how it affects you, the tests and the full diff. "
         f"Or just reply <b>yes</b> to land it, or <b>no</b> and a reason to send it back.</td></tr>"
@@ -151,7 +198,7 @@ def render(store, a, mode="web", url="", page_id=None):
     if mode == "web" and status == "approved":
         parts.append("<meta http-equiv='refresh' content='3'>")  # landing in progress
     parts.append("</head><body><main>")
-    parts.append(f"<div class='meta'>braid #{a['id']} · {_e(r['agent'])} → {_e(r['base'])} · "
+    parts.append(f"<div class='meta'>braid #{a['id']} · {_e(_who(r))} → {_e(r['base'])} · "
                  f"{time.strftime('%d %b %H:%M', time.localtime(a['created_at']))}</div>")
     parts.append(f"<h1>{_e(r['title'])}</h1>")
     chips = [_tests_chip(r["tests"]), f"<span class='chip {risk_cls}'>{_e(r['risk'])} risk</span>",
@@ -171,6 +218,7 @@ def render(store, a, mode="web", url="", page_id=None):
 
     parts.append(f"<h2>What changed</h2><div class='card'>{_e(r['summary'])}"
                  f"<div class='meta' style='margin-top:6px'>Task: {_e(r['task'])}</div></div>")
+    parts.append(_page_agents(r))
     parts.append(f"<h2>How it affects you</h2><div class='card'>{_e(r['impact'])}")
     users = [e for e in r["entities"] if e.get("used_by")]
     if users:
