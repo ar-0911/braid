@@ -68,6 +68,8 @@ Now nothing lands until you say yes. Once an agent's work has passed review, con
 
 Reply `YES` (or `NO` and a reason), tap the button, or run `braid approve` / `braid reject -m "why"`. A yes lands exactly the merge commit you were shown and pushes it (`approve.push`). A no sends the work back to its agent with your reason, and the watcher relaunches it to fix it.
 
+**One email per run instead of per landing.** With `braid settings approve.mode run`, agents land on a staging branch `braid-run/main` (and pick up each other's work from it, as they would from main) instead of asking one by one. When nothing is left working on it and no `braid do` plan is still running, braid sends a single request for the whole run: one summary covering every task, the combined diff and review page, and the tests. Yes moves main to exactly that commit, pushes it and clears the staging branch. No leaves the work on `braid-run/main` for you to look at (delete the branch to drop it). If main moves under the run, braid merges it in and asks again. `approve.mode each` (the default) is one request per landing.
+
 | channel | you need | set up |
 |---|---|---|
 | **Cloudflare** (recommended) | a Cloudflare account and a domain on it (free plan) | deploy [cloudflare/](cloudflare/README.md) once; it hosts the review pages, emails you and takes your reply, nothing exposed on your machine |
@@ -190,6 +192,7 @@ Guard rails for agents: `ready_to_land` refuses while the agent has unread confl
 | `plan.command` | Claude Code, headless, read-only tools | the planner for `braid do`; `{prompt}` is filled in |
 | `plan.max_tasks` | `6` | most tasks a plan may have (`--max-agents` overrides) |
 | `approve.required` | `no` | `yes`: every landing waits for your yes |
+| `approve.mode` | `each` | `run`: one request when the whole run is done, landings collect on `braid-run/<base>` until then |
 | `approve.channels` | (none) | `cloudflare`, `whatsapp`, `telegram`, `email`, `command`, comma separated |
 | `approve.cloudflare.url` | (none) | your deployed approvals Worker |
 | `approve.summary_command` | `claude -p {prompt}` | writes the summary and impact; empty for the built-in one |

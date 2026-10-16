@@ -11,6 +11,7 @@ import time
 from pathlib import Path
 
 from . import approve, gitutil, regen
+from .store import RUN_PREFIX
 
 MARKER = re.compile(r"^(<<<<<<<|>>>>>>>)( |$)", re.M)
 
@@ -294,7 +295,7 @@ def _land(store, name, push):
     if not ok:
         return LandResult(False, why, waiting=True)
 
-    approval = approve.lookup(store, name, head) if approve.required(store) else None
+    approval = approve.lookup(store, name, head) if approve.per_landing(store) else None
     if approval and approval["status"] == "pending":
         return LandResult(False, approve.waiting_message(approval), waiting=True)
     if approval and approval["status"] == "rejected":
@@ -382,7 +383,7 @@ def _land(store, name, push):
 
     new_oid = gitutil.rev("HEAD", cwd=integ)
     # an earlier yes still counts after the base moved, unless landing needed a new conflict resolution
-    if approve.required(store) and not (approval and approval["status"] == "approved" and not did):
+    if approve.per_landing(store) and not (approval and approval["status"] == "approved" and not did):
         a = approve.request(store, agent, base, base_oid, new_oid, (passed, output), sorted(set(reviewers)),
                             store.decision(did)["detail"] if did else None)
         return LandResult(False, approve.waiting_message(a), waiting=True)
@@ -474,7 +475,7 @@ def push_base(store, branches=False):
     rc, _ = gitutil.git("remote", "get-url", remote, cwd=store.repo, check=False)
     if rc != 0:
         return False, f"no remote named {remote}; add one with: braid remote add {remote} <url>"
-    refs = [b for b in store.bases_in_use() if gitutil.rev(b, cwd=store.repo)]
+    refs = [b for b in store.bases_in_use() if gitutil.rev(b, cwd=store.repo) and not b.startswith(RUN_PREFIX)]
     if branches:
         refs += [a["branch"] for a in store.live_agents()]
     proc = subprocess.run(["git", "push", remote, *refs], cwd=store.repo, capture_output=True, text=True)

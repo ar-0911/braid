@@ -255,6 +255,86 @@ class Channels(ApprovalCase):
         self.assertEqual(len(put), 1)  # the page was told how it ended
 
 
+class RunMode(ApprovalCase):
+    """approve.mode run: landings collect on braid-run/main and the whole run asks once."""
+
+    def setUp(self):
+        super().setUp()
+        self.store.set_cfg("approve.mode", "run")
+
+    def rev(self, ref):
+        return sh("git", "rev-parse", "--verify", "--quiet", ref, cwd=self.repo, check=False).stdout.strip()
+
+    def messages(self):
+        return [m for m in self.inbox.read_text().split("----\n") if m.strip()] if self.inbox.exists() else []
+
+    def test_one_request_for_the_whole_run_then_one_yes_lands_it_all(self):
+        before = self.main()
+        self.ready(self.one, self.wt1, "return 1", "return 10")
+        braid("land", cwd=self.repo, check=False)
+        self.assertEqual(self.main(), before)  # landed on staging, not main
+        self.assertIn("return 10", self.show("braid-run/main"))
+        self.assertEqual(approve.all_approvals(self.store), [])  # task-two is still working
+        self.ready(self.two, self.wt2, "x = 1", "x = 2", path="other.py")
+        r = braid("land", cwd=self.repo, check=False)
+        self.assertIn("the run on main is done (2 agents)", r.stdout)
+        [a] = approve.all_approvals(self.store)
+        self.assertEqual(a["agent"], "run:main")
+        self.assertEqual(a["proposal_oid"], self.rev("braid-run/main"))
+        self.assertTrue(a["report"]["task"].startswith("(1) "))  # both tasks listed
+        self.assertEqual(len(self.messages()), 1)  # one message, not one per agent
+        braid("land", cwd=self.repo, check=False)
+        self.assertEqual(len(approve.all_approvals(self.store)), 1)  # asks only once
+        r = braid("approve", a["code"], cwd=self.repo)
+        self.assertIn("the run landed on main", r.stdout)
+        self.assertEqual(self.main(), a["proposal_oid"])
+        self.assertIn("return 10", self.show("main"))
+        self.assertIn("x = 2", self.show("main", "other.py"))
+        self.assertEqual(self.rev("braid-run/main"), "")  # staging cleared for the next run
+        self.assertEqual(approve.get(self.store, a["id"])["status"], "landed")
+        self.assertEqual(self.rev("refs/braid/approvals/run-main"), "")
+
+    def finish_run(self):
+        self.ready(self.one, self.wt1, "return 1", "return 10")
+        self.ready(self.two, self.wt2, "x = 1", "x = 2", path="other.py")
+        braid("land", cwd=self.repo, check=False)
+        return approve.all_approvals(self.store)[-1]
+
+    def test_no_keeps_the_run_on_staging_and_does_not_ask_again(self):
+        before = self.main()
+        a = self.finish_run()
+        r = braid("reject", a["code"], "-m", "not yet", cwd=self.repo)
+        self.assertIn("kept on braid-run/main", r.stdout)
+        self.assertEqual(self.main(), before)
+        self.assertEqual(self.rev("braid-run/main"), a["proposal_oid"])
+        self.assertNotEqual(self.store.agent("task-one")["status"], "blocked")
+        braid("land", cwd=self.repo, check=False)
+        self.assertEqual(len(approve.all_approvals(self.store)), 1)
+
+    def test_main_moving_under_the_run_asks_again_with_it_merged(self):
+        a = self.finish_run()
+        (self.repo / "new.txt").write_text("hi\n")
+        sh("git", "add", "new.txt", cwd=self.repo)
+        sh("git", "commit", "-qm", "someone else", cwd=self.repo)
+        r = braid("approve", a["code"], cwd=self.repo, check=False)
+        self.assertIn("main moved since you were asked", r.stdout)
+        self.assertEqual(approve.get(self.store, a["id"])["status"], "failed")
+        braid("land", cwd=self.repo, check=False)
+        b = approve.all_approvals(self.store)[-1]
+        self.assertEqual(b["status"], "pending")
+        self.assertNotEqual(b["id"], a["id"])
+        braid("approve", b["code"], cwd=self.repo)
+        self.assertIn("return 10", self.show("main"))
+        self.assertEqual(self.show("main", "new.txt"), "hi\n")
+
+    def test_each_mode_is_unchanged(self):
+        self.store.set_cfg("approve.mode", "each")
+        self.ready(self.one, self.wt1, "return 1", "return 10")
+        braid("land", cwd=self.repo, check=False)
+        self.assertEqual(approve.get(self.store, 1)["agent"], "task-one")
+        self.assertEqual(self.rev("braid-run/main"), "")
+
+
 class GlobalSettings(RepoCase):
     agents = ()
 

@@ -18,7 +18,8 @@ from . import gitutil
 from .store import DEFAULTS
 
 DEFAULTS.update({
-    "approve.required": "no",          # yes: every landing waits for a human yes
+    "approve.required": "no",          # yes: changes wait for a human yes before the base branch moves
+    "approve.mode": "each",            # each: one request per landing; run: one request when the whole run is done
     "approve.channels": "",            # comma list of: cloudflare, email, whatsapp, telegram, command
     "approve.cloudflare.url": "",      # your braid worker, e.g. https://braid-approvals.you.workers.dev
     "approve.summary_command": "claude -p {prompt}",  # writes the summary; empty for the built-in one
@@ -71,6 +72,19 @@ def ensure(store):
 
 def required(store):
     return store.cfg_bool("approve.required")
+
+
+def per_landing(store):
+    """Does each landing wait for its own yes? (In run mode landings go to staging and the run asks once.)"""
+    return required(store) and store.cfg("approve.mode") != "run"
+
+
+def is_run(a):
+    return a["agent"].startswith("run:")
+
+
+def _ref(name):
+    return "refs/braid/approvals/" + name.replace(":", "-")
 
 
 def _decode(row):
@@ -126,7 +140,7 @@ def request(store, agent, base, base_oid, new_oid, tests, reviewers, resolution=
     """Record a pending approval for landing new_oid, write its report and notify. Returns the approval."""
     ensure(store)
     head = gitutil.rev(agent["branch"], cwd=store.repo)
-    gitutil.git("update-ref", f"refs/braid/approvals/{agent['name']}", new_oid, cwd=store.repo)  # keep it from gc
+    gitutil.git("update-ref", _ref(agent["name"]), new_oid, cwd=store.repo)  # keep it from gc
     diff = gitutil.out("diff", "--find-renames", base_oid, new_oid, cwd=store.repo)
     report = build_report(store, agent, base, base_oid, new_oid, diff, tests, reviewers, resolution)
     code = "".join(secrets.choice(CODE_ALPHABET) for _ in range(4))
@@ -153,13 +167,16 @@ def decide(store, ref, approve_it, by, comment="", apply=True):
     status = "approved" if approve_it else "rejected"
     _set(store, a["id"], status=status, decided_at=time.time(), decided_by=by, comment=comment or "")
     store.event("approval", f"#{a['id']} {status} by {by}" + (f": {comment}" if comment else ""), a["agent"])
+    if not approve_it and is_run(a):
+        from . import runapprove
+        return runapprove.rejected(store, a["id"])
     if not approve_it:
         from . import land
         a = get(store, a["id"])
         land.block(store, a["agent"], rejection_message(a))  # the watcher relaunches the agent to address it
         _set(store, a["id"], result="sent back to the agent")
         _report_back(store, a["id"])
-        gitutil.git("update-ref", "-d", f"refs/braid/approvals/{a['agent']}", cwd=store.repo, check=False)
+        gitutil.git("update-ref", "-d", _ref(a["agent"]), cwd=store.repo, check=False)
         return get(store, a["id"]), f"#{a['id']} sent back to {a['agent']}"
     if not apply:
         return get(store, a["id"]), f"#{a['id']} approved"
@@ -169,6 +186,9 @@ def decide(store, ref, approve_it, by, comment="", apply=True):
 def apply_approved(store, aid):
     from . import land
     a = get(store, aid)
+    if is_run(a):
+        from . import runapprove
+        return runapprove.apply(store, aid)
     r = land.land(store, a["agent"], push=store.cfg_bool("approve.push"))
     if r.ok:
         if get(store, aid)["status"] != "landed":
@@ -184,7 +204,7 @@ def apply_approved(store, aid):
 
 def landed(store, aid, message):
     _set(store, aid, status="landed", result=message)
-    gitutil.git("update-ref", "-d", f"refs/braid/approvals/{get(store, aid)['agent']}", cwd=store.repo, check=False)
+    gitutil.git("update-ref", "-d", _ref(get(store, aid)["agent"]), cwd=store.repo, check=False)
     _report_back(store, aid)
 
 

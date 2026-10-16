@@ -119,6 +119,8 @@ CREATE TABLE IF NOT EXISTS meta (
 """
 
 # Defaults for `braid settings`. Values are strings, as typed on the command line.
+RUN_PREFIX = "braid-run/"  # staging branches for approve.mode run
+
 DEFAULTS = {
     "base": "main",
     "remote": "origin",
@@ -214,8 +216,21 @@ class Store:
         return self.cfg("base")
 
     def agent_base(self, agent):
-        """The branch an agent lands on: its own, else the repo default."""
-        return agent.get("base") or self.base_branch()
+        """The branch an agent lands on: its own, else the repo default. With approve.mode run, a staging
+        branch (braid-run/<base>) that collects the whole run and goes to you for one yes at the end."""
+        base = agent.get("base") or self.base_branch()
+        if (self.cfg("approve.mode") == "run" and self.cfg_bool("approve.required")
+                and agent.get("status") not in ("landed", "done")):
+            return self.run_branch(base)
+        return base
+
+    def run_branch(self, base):
+        """The staging branch for a run on base, created from base when a run starts."""
+        staging = RUN_PREFIX + base
+        if not gitutil.rev(staging, cwd=self.repo) and gitutil.rev(base, cwd=self.repo):
+            gitutil.git("branch", staging, base, cwd=self.repo)
+            self.event("branch", f"created {staging} to collect this run before it goes to {base}")
+        return staging
 
     def bases_in_use(self):
         return sorted({self.base_branch()} | {self.agent_base(a) for a in self.agents()})
