@@ -9,7 +9,7 @@ import sys
 import time
 from pathlib import Path
 
-from . import __version__, gitutil, land, predict, structmerge
+from . import __version__, gitutil, land, planner, predict, structmerge
 from .store import DEFAULTS, Store
 
 HOOK_MARKER = "# installed by braid"
@@ -21,7 +21,8 @@ PY = f"{PY_ENV} {shlex.quote(sys.executable)} -m braid"
 AGENT_PROMPT = """You are agent "{name}", one of several AI agents working in parallel on this repository.
 Your task: {task}
 
-You are in your own git worktree on branch {branch}. Other agents are working on other branches right now.
+You are in your own git worktree on branch {branch}; your work lands on {base}. Other agents are working on
+other branches right now.
 Use the `braid` MCP tools to work as a team:
 
 1. Start with `peers` and `read_notes` to see who is doing what.
@@ -185,38 +186,145 @@ def launch(store, agent, prompt):
     return proc
 
 
+def ensure_branch(store, branch):
+    """Make sure a base branch exists; new ones start from the repo's default base."""
+    if not gitutil.rev(branch, cwd=store.repo):
+        gitutil.git("branch", branch, store.base_branch(), cwd=store.repo)
+        store.event("branch", f"created {branch} from {store.base_branch()}")
+
+
+def create_agent(store, task, name=None, base=None, brief=None, launch_it=True, taken=None):
+    """Branch + worktree + registration + launch for one task. Returns the agent row."""
+    base = base or store.base_branch()
+    ensure_branch(store, base)
+    taken = taken if taken is not None else {a["name"] for a in store.agents()}
+    name = name if name and name not in taken else slug(name or task, taken)
+    taken.add(name)
+    wt = store.repo.parent / f"{store.repo.name}.agents" / name
+    branch = f"agent/{name}"
+    gitutil.git("worktree", "add", "-q", "-b", branch, str(wt), base, cwd=store.repo)
+    store.add_agent(name, branch, wt, task, base=base)
+    write_mcp_config(store, name)
+    test = store.cfg("test.command")
+    prompt = AGENT_PROMPT.format(name=name, task=brief or task, branch=branch, base=base,
+                                 tests=f"run them with: {test}" if test else "if the project has any")
+    agent = store.agent(name)
+    if launch_it:
+        launch(store, agent, prompt)
+    else:
+        _, task_file, _ = agent_paths(store, name)
+        task_file.parent.mkdir(parents=True, exist_ok=True)
+        task_file.write_text(prompt)
+        store.update_agent(name, pid=None)
+    return store.agent(name)
+
+
 def cmd_start(args):
     store = open_store()
     if args.agent_cmd:
         store.set_cfg("agent.command", args.agent_cmd)
-    base = store.base_branch()
-    wt_root = store.repo.parent / f"{store.repo.name}.agents"
     taken = {a["name"] for a in store.agents()}
     for task in args.tasks:
-        name = args.name if args.name and len(args.tasks) == 1 else slug(task, taken)
-        taken.add(name)
-        branch, wt = f"agent/{name}", wt_root / name
-        gitutil.git("worktree", "add", "-q", "-b", branch, str(wt), base, cwd=store.repo)
-        store.add_agent(name, branch, wt, task)
-        cfg = write_mcp_config(store, name)
-        test = store.cfg("test.command")
-        prompt = AGENT_PROMPT.format(name=name, task=task, branch=branch,
-                                     tests=f"run them with: {test}" if test else "if the project has any")
-        agent = store.agent(name)
+        name = args.name if args.name and len(args.tasks) == 1 else None
+        a = create_agent(store, task, name=name, base=args.base, launch_it=not args.no_launch, taken=taken)
+        where = f"branch {a['branch']} -> lands on {a['base']}  worktree {a['worktree']}"
         if args.no_launch:
-            _, task_file, _ = agent_paths(store, name)
-            task_file.parent.mkdir(parents=True, exist_ok=True)
-            task_file.write_text(prompt)
-            store.update_agent(name, pid=None)
-            print(f"{color(name, '1')}  branch {branch}  worktree {wt}")
-            print(f"  start it yourself:  cd {shlex.quote(str(wt))} && claude --mcp-config {shlex.quote(str(cfg))}"
+            cfg, task_file, _ = agent_paths(store, a["name"])
+            print(f"{color(a['name'], '1')}  {where}")
+            print(f"  start it yourself:  cd {shlex.quote(a['worktree'])} && claude --mcp-config {shlex.quote(str(cfg))}"
                   f" \"$(cat {shlex.quote(str(task_file))})\"")
         else:
-            proc = launch(store, agent, prompt)
-            print(f"{color(name, '1')}  branch {branch}  worktree {wt}  (agent pid {proc.pid})")
+            print(f"{color(a['name'], '1')}  {where}  (agent pid {a['pid']})")
     if not args.no_daemon:
         daemon_start(store, quiet=True)
     print("\nwatch it with:  braid status --live      activity feed:  braid feed -f")
+
+
+def plan_starter(store):
+    def start(plan, task, brief):
+        return create_agent(store, task["title"], name=task["id"], base=plan["base"], brief=brief)["name"]
+    return start
+
+
+def print_plan(store, pid):
+    plan, tasks = store.plan(pid), store.plan_tasks(pid)
+    print(f"{color(f'plan #{pid}', '1')}  {plan['goal']}")
+    print(f"  lands on: {plan['base']}   status: {plan['status']}" + ("   push when done" if plan["push"] else ""))
+    for n, wave in enumerate(planner.waves(tasks), 1):
+        print(f"\n  wave {n}" + (" (starts now)" if n == 1 else " (starts when its dependencies land)"))
+        for t in wave:
+            st = f"[{t['status']}{' as ' + t['agent'] if t['agent'] else ''}]" if plan["status"] != "proposed" else ""
+            print(f"    {color(t['id'], '1')} {st} {t['title']}")
+            if t["files"]:
+                print(f"        owns: {', '.join(t['files'])}")
+            if t["depends_on"]:
+                print(f"        after: {', '.join(t['depends_on'])}")
+
+
+def run_plan(store, pid):
+    store.set_plan_status(pid, "running")
+    started = planner.advance(store, plan_starter(store))
+    daemon_start(store, quiet=True)
+    return started
+
+
+def cmd_do(args):
+    store = open_store()
+    base = args.base or store.base_branch()
+    ensure_branch(store, base)
+    if args.plan_file:
+        try:
+            tasks = planner.parse_plan(Path(args.plan_file).read_text())
+        except (OSError, planner.PlanError) as e:
+            sys.exit(f"braid: {e}")
+        goal = args.goal or f"plan from {args.plan_file}"
+    else:
+        if not args.goal:
+            sys.exit("braid do needs a goal, e.g. braid do \"build a todo app with a REST API and a web UI\"")
+        print(color("planning...", "90"), flush=True)
+        try:
+            tasks = planner.ask_planner(store, args.goal, base, args.max_agents or int(store.cfg("plan.max_tasks")))
+        except planner.PlanError as e:
+            sys.exit(f"braid: {e}")
+        goal = args.goal
+    pid = store.add_plan(goal, base, tasks, push=args.push)
+    plan_file = store.dir / "plans" / f"{pid}.json"
+    plan_file.parent.mkdir(parents=True, exist_ok=True)
+    plan_file.write_text(json.dumps({"goal": goal, "base": base, "tasks": tasks}, indent=2))
+    print_plan(store, pid)
+    print(f"\n  plan saved to {plan_file}")
+    go = args.yes
+    if not go and sys.stdin.isatty():
+        go = input("\nstart it? [Y/n] ").strip().lower() in ("", "y", "yes")
+    if not go:
+        print(f"\nnot started. to change it, edit the file and run:  braid do --plan-file {plan_file} --base {base}"
+              f"\nto start it as is:  braid plans start {pid}")
+        return
+    started = run_plan(store, pid)
+    print(f"\nstarted {len(started)} agent(s): {', '.join(started)}. later waves start as their dependencies land.")
+    print("watch it with:  braid status --live      activity feed:  braid feed -f")
+
+
+def cmd_plans(args):
+    store = open_store()
+    if args.action == "start":
+        if not store.plan(args.id):
+            sys.exit(f"no plan #{args.id}")
+        started = run_plan(store, args.id)
+        print(f"started {', '.join(started) or 'nothing new'}")
+    elif args.action == "cancel":
+        store.set_plan_status(args.id, "cancelled")
+        print(f"plan #{args.id} cancelled; its running agents keep going (braid stop <agent> to stop them)")
+    elif args.action == "show" or args.id:
+        print_plan(store, args.id or store.plans()[-1]["id"])
+    else:
+        plans = store.plans()
+        if not plans:
+            print("no plans yet. make one with:  braid do \"what you want built\"")
+        for p in plans:
+            tasks = store.plan_tasks(p["id"])
+            done = sum(t["status"] == "landed" for t in tasks)
+            print(f"#{p['id']}  {p['status']:<9} {done}/{len(tasks)} landed  on {p['base']}  {p['goal'][:70]}")
 
 
 def resume_agent(store, a, why=None, message=None):
@@ -311,8 +419,14 @@ def render_status(store):
     alive = "running" if daemon_pid(store) else "stopped"
     lines.append(f"{color('braid', '1')}  base {base} @ {base_oid[:10] if base_oid else '?'}   daemon {alive}")
     agents = store.agents()
+    for p in store.plans("running"):
+        tasks = store.plan_tasks(p["id"])
+        done = sum(t["status"] == "landed" for t in tasks)
+        waiting = [t["id"] for t in tasks if t["status"] == "waiting"]
+        lines.append(f"\n{color('plan #' + str(p['id']), '1')} {done}/{len(tasks)} landed on {p['base']}: {p['goal'][:80]}"
+                     + (f"\n  waiting on dependencies: {', '.join(waiting)}" if waiting else ""))
     if not agents:
-        lines.append('\nno agents yet. start some with:  braid start "task one" "task two"')
+        lines.append('\nno agents yet. start some with:  braid start "task one" "task two"  or  braid do "goal"')
         return "\n".join(lines)
     leases = store.leases()
     lines.append("")
@@ -321,10 +435,12 @@ def render_status(store):
         run = ""
         if a.get("pid"):
             run = "running" if store.process_alive(a) else "stopped"
-        ahead = ""
-        if a["status"] not in ("landed", "done") and base_oid and gitutil.rev(a["branch"], cwd=store.repo):
-            ahead = gitutil.out("rev-list", "--count", f"{base}..{a['branch']}", cwd=store.repo) + " commits"
-        lines.append(f"  {color(a['name'], '1'):<30} {st} {ahead:<11} {run:<8} {a['task']}")
+        ahead, ab = "", store.agent_base(a)
+        if a["status"] not in ("landed", "done") and gitutil.rev(ab, cwd=store.repo) \
+                and gitutil.rev(a["branch"], cwd=store.repo):
+            ahead = gitutil.out("rev-list", "--count", f"{ab}..{a['branch']}", cwd=store.repo) + " commits"
+        onto = f" -> {ab}" if ab != base else ""
+        lines.append(f"  {color(a['name'], '1'):<30} {st} {ahead:<11} {run:<8} {a['task'][:90]}{onto}")
         mine = [l["path"] + ("!" if l["kind"] == "hard" else "") for l in leases if l["agent"] == a["name"]]
         if mine:
             lines.append(f"      owns: {', '.join(mine)}")
@@ -476,6 +592,8 @@ def tick(store, auto_land=None):
         if why and count < limit:
             store.set_meta(f"resumes.{a['name']}", count + 1)
             resume_agent(store, a, why)
+    if store.plans("running"):
+        planner.advance(store, plan_starter(store))  # start tasks whose dependencies have landed
     _, new = predict.check(store)
     results = []
     if store.cfg_bool("land.auto") if auto_land is None else auto_land:
@@ -490,6 +608,8 @@ def tick(store, auto_land=None):
             landed_any |= r.ok
         if landed_any:
             predict.check(store)  # base moved: refresh everyone's risks against it
+            if store.plans("running"):
+                planner.advance(store, plan_starter(store))
     return new, results
 
 
@@ -653,6 +773,23 @@ def cmd_doctor(args):
     check(f"agent CLI '{agent_bin}' on PATH", bool(which(agent_bin)), "install Claude Code or set agent.command")
 
 
+def cmd_connect(args):
+    """Give the Claude Code session you work in braid's tools, so you can say "split this up" and it delegates."""
+    store = open_store()
+    cmd = ["claude", "mcp", "add", "braid", "--scope", args.scope, "-e", f"PYTHONPATH={PKG_PARENT}",
+           "-e", f"BRAID_REPO={store.repo}", "--", sys.executable, "-m", "braid", "mcp"]
+    from shutil import which
+    if which("claude") and not args.print_only:
+        r = subprocess.run(cmd, cwd=store.repo, capture_output=True, text=True)
+        print((r.stdout + r.stderr).strip() or "added")
+        if r.returncode != 0:
+            sys.exit(r.returncode)
+    else:
+        print(" ".join(shlex.quote(c) for c in cmd))
+    print("\nnow, in Claude Code in this repo, ask for something big and say to delegate it with braid,\n"
+          "e.g. \"use braid to build a REST API and a web UI for todos\". It calls delegate, then team_status.")
+
+
 def cmd_merge_driver(args):
     sys.exit(structmerge.driver_main(args.base, args.ours, args.theirs, args.path))
 
@@ -723,9 +860,22 @@ def build_parser():
     s = add("start", cmd_start, "start one agent per task, each on its own branch and worktree")
     s.add_argument("tasks", nargs="+")
     s.add_argument("--name", help="agent name (only with a single task)")
+    s.add_argument("--base", help="branch these agents land on instead of the default (created if new)")
     s.add_argument("--no-launch", action="store_true", help="create the worktrees but start agents yourself")
     s.add_argument("--no-daemon", action="store_true", help="don't start the background watcher")
     s.add_argument("--agent-cmd", help="command template to launch agents; {prompt} and {mcp_config} filled in")
+
+    s = add("do", cmd_do, "plan a goal into parallel tasks and run them in dependency waves")
+    s.add_argument("goal", nargs="?")
+    s.add_argument("--base", help="branch everything lands on (created from the default base if new)")
+    s.add_argument("--yes", "-y", action="store_true", help="start without asking")
+    s.add_argument("--push", action="store_true", help="push the base branch when every task has landed")
+    s.add_argument("--max-agents", type=int, help="most tasks the planner may create")
+    s.add_argument("--plan-file", help="run a plan you wrote or edited instead of asking the planner")
+
+    s = add("plans", cmd_plans, "list plans, show one, start or cancel it")
+    s.add_argument("action", nargs="?", choices=["show", "start", "cancel"])
+    s.add_argument("id", nargs="?", type=int)
 
     s = add("status", cmd_status, "agents, ownership, predicted conflicts, decisions")
     s.add_argument("--live", action="store_true", help="keep refreshing")
@@ -798,6 +948,10 @@ def build_parser():
     s.add_argument("value", nargs="?")
 
     add("doctor", cmd_doctor, "check that everything braid needs is in place")
+
+    s = add("connect", cmd_connect, "give your own Claude Code session braid's tools (delegate, team_status)")
+    s.add_argument("--scope", default="local", choices=["local", "project", "user"])
+    s.add_argument("--print-only", action="store_true", help="print the command instead of running it")
 
     s = sub.add_parser("merge-driver")
     s.add_argument("base")

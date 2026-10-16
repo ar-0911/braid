@@ -50,6 +50,15 @@ TOOLS = [
      _obj({"agent": S, "verdict": {"type": "string", "enum": ["approve", "changes"]}, "comment": S},
           ["agent", "verdict", "comment"])),
     ("decisions", "Conflict resolutions that involve you, with their status.", _obj()),
+    ("delegate", "LEAD SESSION ONLY. Hand a goal to braid: a planner splits it into parallel tasks with dependencies, "
+                 "and braid starts one agent per task in waves, reviews, merges, tests and lands them on `base`. "
+                 "Returns the plan. Follow progress with team_status.",
+     _obj({"goal": S, "base": S, "max_agents": {"type": "integer"}}, ["goal"])),
+    ("start_agents", "LEAD SESSION ONLY. Start one agent per task you have already split, all in parallel, landing "
+                     "on `base` (default: the repo's base branch).",
+     _obj({"tasks": {"type": "array", "items": S}, "base": S}, ["tasks"])),
+    ("team_status", "Every agent's status, running plans with their progress, predicted conflicts and open decisions.",
+     _obj()),
     ("vote", "Accept or object to an automatic conflict resolution that involves your work. An objection stops "
              "it from landing.",
      _obj({"decision_id": {"type": "integer"}, "vote": {"type": "string", "enum": ["accept", "object"]},
@@ -71,7 +80,8 @@ class Server:
     def call(self, name, args):
         s, me = self.store, self.agent
         if name == "whoami":
-            return self.me()
+            return s.agent(me) or {"name": me, "role": "lead session: you can delegate, start_agents and "
+                                                         "watch team_status"}
         if name == "peers":
             leases = s.leases()
             return [{"name": a["name"], "task": a["task"], "status": a["status"], "branch": a["branch"],
@@ -116,14 +126,14 @@ class Server:
                 head = gitutil.rev(a["branch"], cwd=s.repo)
                 if s.reviews(a["name"], head):
                     continue
-                stat = gitutil.out("diff", "--stat", f"{s.base_branch()}...{a['branch']}", cwd=s.repo)
+                stat = gitutil.out("diff", "--stat", f"{s.agent_base(a)}...{a['branch']}", cwd=s.repo)
                 out.append({"agent": a["name"], "task": a["task"], "summary": a["summary"], "diffstat": stat})
             return out or "nothing waiting for review"
         if name == "show_diff":
             a = s.agent(args["agent"])
             if not a:
                 raise KeyError(f"no agent {args['agent']}")
-            diff = gitutil.out("diff", f"{s.base_branch()}...{a['branch']}", cwd=s.repo)
+            diff = gitutil.out("diff", f"{s.agent_base(a)}...{a['branch']}", cwd=s.repo)
             return diff[:80000] + ("\n[diff truncated]" if len(diff) > 80000 else "")
         if name == "review":
             target = args["agent"]
@@ -140,6 +150,31 @@ class Server:
             return {"ok": True}
         if name == "decisions":
             return s.decisions(agent=me) or "no decisions involve you"
+        if name in ("delegate", "start_agents"):
+            if s.agent(me):
+                raise PermissionError("only the lead session can start agents; post_note to ask for help instead")
+            from . import cli, planner
+            base = args.get("base") or s.base_branch()
+            cli.ensure_branch(s, base)
+            if name == "start_agents":
+                agents = [cli.create_agent(s, t, base=base) for t in args["tasks"]]
+                cli.daemon_start(s, quiet=True)
+                return {"started": [{"name": a["name"], "branch": a["branch"], "lands_on": base} for a in agents]}
+            tasks = planner.ask_planner(s, args["goal"], base,
+                                        args.get("max_agents") or int(s.cfg("plan.max_tasks")))
+            pid = s.add_plan(args["goal"], base, tasks)
+            started = cli.run_plan(s, pid)
+            return {"plan": pid, "lands_on": base, "started_now": started,
+                    "waves": [[t["id"] for t in w] for w in planner.waves(tasks)],
+                    "tasks": [{k: t[k] for k in ("id", "title", "files", "depends_on")} for t in tasks]}
+        if name == "team_status":
+            plans = [{"id": p["id"], "goal": p["goal"], "base": p["base"],
+                      "tasks": [{"id": t["id"], "status": t["status"], "agent": t["agent"]}
+                                for t in s.plan_tasks(p["id"])]} for p in s.plans("running")]
+            return {"agents": [{"name": a["name"], "status": a["status"], "task": a["task"][:200],
+                                "lands_on": s.agent_base(a)} for a in s.agents()],
+                    "plans": plans, "risks": s.risks(),
+                    "open_decisions": [d for d in s.decisions() if d["status"] in ("proposed", "escalated")]}
         if name == "vote":
             d = s.decision(args["decision_id"])
             if not d:

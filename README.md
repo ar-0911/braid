@@ -8,6 +8,8 @@ braid start "add OAuth login" "billing CSV export" "search filters"
 
 Each task gets its own agent, branch and worktree. The agents share a memory, see what the others are doing, get warned about merge conflicts *while they are still typing*, review each other's work, and braid lands it on `main`: merging code-aware, resolving what still clashes, running your tests, and pushing when you say so. Everything else is plain git: `braid commit`, `braid log`, `braid rebase` just run git.
 
+Or give it one goal: `braid do "build X"` plans the work, splits it across agents in dependency order, and lands it, on `main` or on a feature branch.
+
 - No dependencies beyond Python 3.10+ and git 2.38+.
 - Agents are [Claude Code](https://claude.com/claude-code) sessions by default; any CLI agent can be plugged in.
 - All state lives inside your repo's `.git/`; nothing is uploaded anywhere.
@@ -34,12 +36,35 @@ braid ship                         # land everything that's ready, then push
 
 That's the whole loop. While agents work, the watcher lands each one as soon as it is reviewed and its tests pass.
 
+### One goal, many agents: `braid do`
+
+```sh
+braid do "build a notes app: storage module, CLI, tests"
+```
+
+A planner agent reads the repo and splits the goal into tasks, each owning a set of files and naming the tasks it depends on. braid shows the plan as waves and asks before starting. Every task whose dependencies have landed starts at once, in parallel; when a task lands, the tasks waiting on it start from the updated code, so they build on what really exists. `braid plans` shows progress. Flags: `--yes` (no prompt), `--base feature/x`, `--max-agents N`, `--push` (push when every task landed), `--plan-file plan.json` (run a plan you edited; each plan is saved in `.git/braid/plans/`).
+
+### Big features off main: `--base`
+
+```sh
+braid do --base feature/checkout "checkout flow: cart API, payment service, UI"
+braid start --base feature/checkout "order emails"
+```
+
+Every agent has its own base branch. braid creates the branch from your current base if it doesn't exist, agents branch from it, conflicts are only predicted between agents on the same base, and work lands on `feature/checkout`, never `main`. When the feature is done, merge or PR it to `main` as one unit.
+
+### From your own Claude session: `braid connect`
+
+`braid connect` registers braid's MCP server with Claude Code (`--scope local|project|user`). Your own session then has lead-only tools: `delegate` (plan a goal and start agents, like `braid do`), `start_agents`, and `team_status`. So you can say "split this up and get some agents on it" in your normal chat. Agents themselves cannot start more agents.
+
 ### Everyday commands
 
 | you want to | run |
 |---|---|
 | set up a repo (creates one in a plain folder) | `braid init [--base main] [--test "cmd"]` |
-| start agents | `braid start "task" ["task" ...]` (`--no-launch` to drive them yourself) |
+| start agents | `braid start "task" ["task" ...]` (`--base feature/x`, `--no-launch` to drive them yourself) |
+| plan and run a goal | `braid do "goal"`, then `braid plans`, `braid plans show 1`, `braid plans cancel 1` |
+| use braid from your Claude session | `braid connect` |
 | see everything | `braid status [--live]` (also shows `git status` for where you are) |
 | activity / messages | `braid feed -f`, `braid chat`, `braid chat --post "use the v2 API" --to login` |
 | check conflicts now | `braid check` (exit 1 when a conflict is predicted, handy in scripts) |
@@ -102,7 +127,7 @@ Every landing is a merge commit with `Braid-Agent:` and `Reviewed-by:` trailers,
 
 | key | default | meaning |
 |---|---|---|
-| `base` | current branch at init | branch agents start from and land on |
+| `base` | current branch at init | default branch agents start from and land on (`--base` overrides per agent) |
 | `remote` | `origin` | where `push` goes |
 | `test.command` | (none) | must pass before anything lands; agents are allowed to run it |
 | `review.required` | `auto` | `auto`, `yes`, `no` |
@@ -114,6 +139,8 @@ Every landing is a merge commit with `Braid-Agent:` and `Reviewed-by:` trailers,
 | `agent.command` | Claude Code, headless, with braid's MCP tools and git allowed | how agents are launched; `{prompt}`, `{mcp_config}`, `{name}` |
 | `agent.auto_resume` | `2` | relaunches for an agent that stopped with feedback to handle |
 | `watch.interval` | `5` | seconds between watcher passes |
+| `plan.command` | Claude Code, headless, read-only tools | the planner for `braid do`; `{prompt}` is filled in |
+| `plan.max_tasks` | `6` | most tasks a plan may have (`--max-agents` overrides) |
 
 Use a different agent CLI: `braid settings agent.command "my-agent --mcp {mcp_config} --task {prompt}"`.
 
@@ -131,11 +158,11 @@ Use a different agent CLI: `braid settings agent.command "my-agent --mcp {mcp_co
 python -m unittest discover -s tests -v
 ```
 
-39 tests, including an end-to-end run where `braid start` launches real processes (scripted fake agents) and the watcher reviews, resolves and lands them.
+46 tests, including end-to-end runs where `braid start` and `braid do` launch real processes (scripted fake agents) and the watcher reviews, resolves and lands them.
 
 ## Status and roadmap
 
-Milestones done: worktree launcher and shared memory (M1), code-aware merge (M2), review, resolution and consensus (M3), merge queue, sync and push (M4), git-compatible CLI and packaging (M5).
+Milestones done: worktree launcher and shared memory (M1), code-aware merge (M2), review, resolution and consensus (M3), merge queue, sync and push (M4), git-compatible CLI and packaging (M5), `braid do` with dependency waves, feature-branch bases and lead-session delegation (M6).
 
 Next ideas: entity-level merge inside classes for brace languages, a web dashboard, `braid pr` to open one pull request per landing, running agents in containers, and predicting *semantic* conflicts by running tests on the predicted merge.
 

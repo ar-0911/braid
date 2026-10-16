@@ -35,20 +35,21 @@ def predict(store, snaps):
     b is another agent, or '@<base>' when the agent conflicts with the base branch as it is now.
     """
     repo = store.repo
-    base = store.base_branch()
-    base_oid = gitutil.rev(base, cwd=repo)
-    changed = {name: gitutil.changed_paths(base, oid, cwd=repo) for name, oid in snaps.items()}
+    bases = {a["name"]: store.agent_base(a) for a in store.live_agents()}
+    changed = {name: gitutil.changed_paths(bases[name], oid, cwd=repo) for name, oid in snaps.items()}
     risks = []
 
     for a, b in combinations(sorted(snaps), 2):
         shared = changed[a] & changed[b]
-        if not shared:
+        if bases[a] != bases[b] or not shared:
             continue  # disjoint files cannot textually conflict; skip the merge
         clean, conflicted = gitutil.merge_preview(snaps[a], snaps[b], cwd=repo)
         risks.append((a, b, "overlap", shared) if clean else (a, b, "conflict", set(conflicted)))
 
-    if base_oid:
-        for name, oid in snaps.items():
+    for name, oid in snaps.items():
+        base = bases[name]
+        base_oid = gitutil.rev(base, cwd=repo)
+        if base_oid:
             if gitutil.out("merge-base", base_oid, oid, cwd=repo) == base_oid:
                 continue  # base hasn't moved since this agent branched
             clean, conflicted = gitutil.merge_preview(oid, base_oid, cwd=repo)

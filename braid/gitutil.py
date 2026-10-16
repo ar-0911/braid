@@ -1,5 +1,6 @@
 """Thin wrappers around the git CLI."""
 import os
+import shutil
 import subprocess
 import tempfile
 from pathlib import Path
@@ -57,8 +58,14 @@ def snapshot_worktree(worktree):
     os.close(fd)
     os.unlink(tmp_index)  # git wants to create it itself
     env = {"GIT_INDEX_FILE": tmp_index}
+    real_index = Path(out("rev-parse", "--path-format=absolute", "--git-path", "index", cwd=worktree))
     try:
-        git("read-tree", "HEAD", cwd=worktree, env=env)
+        if real_index.exists():
+            # start from the agent's own index: its stat cache means only files that changed get re-hashed,
+            # which keeps snapshots cheap in big repos
+            shutil.copyfile(real_index, tmp_index)
+        else:
+            git("read-tree", "HEAD", cwd=worktree, env=env)
         git("add", "-A", cwd=worktree, env=env)
         tree = out("write-tree", cwd=worktree, env=env)
     finally:
