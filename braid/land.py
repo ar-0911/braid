@@ -10,7 +10,7 @@ import subprocess
 import time
 from pathlib import Path
 
-from . import gitutil
+from . import approve, gitutil
 
 MARKER = re.compile(r"^(<<<<<<<|>>>>>>>)( |$)", re.M)
 
@@ -199,6 +199,14 @@ def _land(store, name, push):
     if not ok:
         return LandResult(False, why, waiting=True)
 
+    approval = approve.lookup(store, name, head) if approve.required(store) else None
+    if approval and approval["status"] == "pending":
+        return LandResult(False, approve.waiting_message(approval), waiting=True)
+    if approval and approval["status"] == "rejected":
+        return _block(store, name, approve.rejection_message(approval))
+    if approval and approval["status"] == "approved" and approval["base_oid"] == base_oid:
+        return _finish(store, agent, base_oid, approval["proposal_oid"], push, approval)  # exactly what was approved
+
     integ = prepare_integration(store, base_oid)
     reviewers = [r["reviewer"] for r in store.reviews(name, head) if r["verdict"] == "approve"]
     msg = (f"braid: land {name}\n\n{agent['task']}\n\nBraid-Agent: {name}\n"
@@ -241,22 +249,41 @@ def _land(store, name, push):
         store.decide(did, "accepted")
 
     new_oid = gitutil.rev("HEAD", cwd=integ)
+    # an earlier yes still counts after the base moved, unless landing needed a new conflict resolution
+    if approve.required(store) and not (approval and approval["status"] == "approved" and not did):
+        a = approve.request(store, agent, base, base_oid, new_oid, (passed, output), sorted(set(reviewers)),
+                            store.decision(did)["detail"] if did else None)
+        return LandResult(False, approve.waiting_message(a), waiting=True)
+    return _finish(store, agent, base_oid, new_oid, push, approval)
+
+
+def _finish(store, agent, base_oid, new_oid, push, approval=None):
+    """Move the base branch to the landed commit and tell everyone."""
+    name, base = agent["name"], store.agent_base(agent)
     moved, why = advance_base(store, base, base_oid, new_oid)
     if not moved:
         return LandResult(False, why)
-    gitutil.git("checkout", "--detach", new_oid, cwd=integ, check=False)
+    gitutil.git("checkout", "--detach", new_oid, cwd=integration_dir(store), check=False)
     store.set_status(name, "landed")
     store.release_lease(name)
     store.event("land", f"landed on {base} as {new_oid[:10]}", name)
     store.post_note("braid", "landed",
                     f"{name} landed on {base} ({agent['task']}). Everyone else: call sync to pick it up.")
-    if push is None:
+    if approval:
+        push = push or store.cfg_bool("approve.push")  # a yes from your phone means land and push
+    elif push is None:
         push = store.cfg_bool("push.auto")
     message = f"{name} landed on {base} ({new_oid[:10]})"
     if push:
         pushed, out = push_base(store)
         message += "; pushed" if pushed else f"; push failed: {out}"
+    if approval:
+        approve.landed(store, approval["id"], message)
     return LandResult(True, message)
+
+
+def block(store, name, why):
+    return _block(store, name, why)
 
 
 def _block(store, name, why):
