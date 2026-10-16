@@ -204,6 +204,8 @@ def _land(store, name, push):
         return LandResult(False, approve.waiting_message(approval), waiting=True)
     if approval and approval["status"] == "rejected":
         return _block(store, name, approve.rejection_message(approval))
+    if approval and approval["status"] == "failed":
+        approval["status"] = "approved"  # you already said yes to this exact work: retry, don't ask again
     if approval and approval["status"] == "approved" and approval["base_oid"] == base_oid:
         return _finish(store, agent, base_oid, approval["proposal_oid"], push, approval)  # exactly what was approved
 
@@ -262,7 +264,7 @@ def _finish(store, agent, base_oid, new_oid, push, approval=None):
     name, base = agent["name"], store.agent_base(agent)
     moved, why = advance_base(store, base, base_oid, new_oid)
     if not moved:
-        return LandResult(False, why)
+        return LandResult(False, why, waiting=True)  # retried every watcher pass until it can move
     gitutil.git("checkout", "--detach", new_oid, cwd=integration_dir(store), check=False)
     store.set_status(name, "landed")
     store.release_lease(name)
@@ -297,7 +299,8 @@ def advance_base(store, base, old, new):
     for wt in gitutil.worktrees(store.repo):
         if wt.get("branch") == base:
             if not gitutil.is_clean(wt["path"]):
-                return False, f"{base} is checked out with uncommitted changes in {wt['path']}"
+                return False, (f"{base} is checked out with uncommitted changes in {wt['path']}; commit or stash "
+                               "them and braid lands it on its next pass")
             rc, _ = gitutil.git("merge", "--ff-only", "-q", new, cwd=wt["path"], check=False)
             return (rc == 0), ("" if rc == 0 else f"{base} moved; try again")
     rc, _ = gitutil.git("update-ref", f"refs/heads/{base}", new, old, cwd=store.repo, check=False)

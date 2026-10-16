@@ -176,8 +176,9 @@ def apply_approved(store, aid):
     elif not r.waiting:
         _set(store, aid, status="failed", result=r.message)
         _report_back(store, aid)
-    else:
+    else:  # approved but can't land yet (e.g. uncommitted changes where main is checked out): retried by the watcher
         _set(store, aid, result=r.message)
+        _report_back(store, aid)
     return get(store, aid), r.message
 
 
