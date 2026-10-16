@@ -19,7 +19,28 @@ CREATE TABLE IF NOT EXISTS agents (
     heartbeat REAL,
     created_at REAL,
     ready_at REAL,
-    summary TEXT
+    summary TEXT,
+    base TEXT                     -- branch this agent starts from and lands on
+);
+CREATE TABLE IF NOT EXISTS plans (
+    id INTEGER PRIMARY KEY,
+    goal TEXT NOT NULL,
+    base TEXT NOT NULL,
+    status TEXT NOT NULL,         -- proposed | running | done | cancelled
+    push INTEGER NOT NULL DEFAULT 0,
+    at REAL NOT NULL
+);
+CREATE TABLE IF NOT EXISTS plan_tasks (
+    plan_id INTEGER NOT NULL,
+    id TEXT NOT NULL,
+    title TEXT NOT NULL,
+    description TEXT NOT NULL,
+    files TEXT NOT NULL,          -- JSON list of paths/globs this task owns
+    depends_on TEXT NOT NULL,     -- JSON list of task ids
+    agent TEXT,
+    status TEXT NOT NULL,         -- waiting | running | landed | failed
+    seq INTEGER NOT NULL,
+    PRIMARY KEY (plan_id, id)
 );
 CREATE TABLE IF NOT EXISTS intents (
     id INTEGER PRIMARY KEY,
@@ -112,6 +133,8 @@ DEFAULTS = {
     "agent.command": "claude -p {prompt} --mcp-config {mcp_config} --permission-mode acceptEdits "
                      "--allowedTools mcp__braid 'Bash(git:*)'",
     "watch.interval": "5",
+    "plan.command": "claude -p {prompt} --allowedTools Read Glob Grep",  # the planner for braid do (read-only)
+    "plan.max_tasks": "6",
     "agent.auto_resume": "2",          # times the daemon relaunches an agent that stopped with feedback to handle
 }
 
@@ -128,6 +151,9 @@ class Store:
         except sqlite3.OperationalError:
             pass  # some network filesystems refuse WAL; rollback journal still works
         self.db.executescript(SCHEMA)
+        cols = {r["name"] for r in self.db.execute("PRAGMA table_info(agents)")}
+        if "base" not in cols:  # databases made before per-agent bases
+            self.db.execute("ALTER TABLE agents ADD COLUMN base TEXT")
 
     def close(self):
         self.db.close()
@@ -155,6 +181,49 @@ class Store:
     def base_branch(self):
         return self.cfg("base")
 
+    def agent_base(self, agent):
+        """The branch an agent lands on: its own, else the repo default."""
+        return agent.get("base") or self.base_branch()
+
+    def bases_in_use(self):
+        return sorted({self.base_branch()} | {self.agent_base(a) for a in self.agents()})
+
+    # ---- plans (braid do)
+    def add_plan(self, goal, base, tasks, push=False):
+        cur = self.db.execute("INSERT INTO plans(goal, base, status, push, at) VALUES (?, ?, 'proposed', ?, ?)",
+                              (goal, base, int(push), time.time()))
+        pid = cur.lastrowid
+        for i, t in enumerate(tasks):
+            self.db.execute(
+                "INSERT INTO plan_tasks(plan_id, id, title, description, files, depends_on, status, seq) "
+                "VALUES (?, ?, ?, ?, ?, ?, 'waiting', ?)",
+                (pid, t["id"], t["title"], t.get("description", ""), json.dumps(t.get("files", [])),
+                 json.dumps(t.get("depends_on", [])), i))
+        return pid
+
+    def plan(self, pid):
+        r = self.db.execute("SELECT * FROM plans WHERE id=?", (pid,)).fetchone()
+        return dict(r) if r else None
+
+    def plans(self, status=None):
+        q, args = "SELECT * FROM plans", ()
+        if status:
+            q, args = q + " WHERE status=?", (status,)
+        return [dict(r) for r in self.db.execute(q + " ORDER BY id", args)]
+
+    def plan_tasks(self, pid):
+        rows = [dict(r) for r in self.db.execute("SELECT * FROM plan_tasks WHERE plan_id=? ORDER BY seq", (pid,))]
+        for r in rows:
+            r["files"], r["depends_on"] = json.loads(r["files"]), json.loads(r["depends_on"])
+        return rows
+
+    def update_plan_task(self, pid, tid, **fields):
+        cols = ", ".join(f"{k}=?" for k in fields)
+        self.db.execute(f"UPDATE plan_tasks SET {cols} WHERE plan_id=? AND id=?", (*fields.values(), pid, tid))
+
+    def set_plan_status(self, pid, status):
+        self.db.execute("UPDATE plans SET status=? WHERE id=?", (status, pid))
+
     def initialized(self):
         return self.get_meta("cfg.base") is not None
 
@@ -174,11 +243,12 @@ class Store:
         return [dict(r) for r in reversed(rows)]
 
     # ---- agents
-    def add_agent(self, name, branch, worktree, task):
+    def add_agent(self, name, branch, worktree, task, base=None):
         now = time.time()
         self.db.execute(
-            "INSERT OR REPLACE INTO agents(name, branch, worktree, task, status, heartbeat, created_at) "
-            "VALUES (?, ?, ?, ?, 'active', ?, ?)", (name, branch, str(worktree), task, now, now))
+            "INSERT OR REPLACE INTO agents(name, branch, worktree, task, status, heartbeat, created_at, base) "
+            "VALUES (?, ?, ?, ?, 'active', ?, ?, ?)",
+            (name, branch, str(worktree), task, now, now, base or self.base_branch()))
         self.event("agent", f"started: {task}", name)
 
     def agents(self, statuses=None):

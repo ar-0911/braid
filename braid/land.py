@@ -54,7 +54,7 @@ def review_gate(store, agent):
 
 
 def auto_review(store, agent):
-    base = store.base_branch()
+    base = store.agent_base(agent)
     diff = gitutil.out("diff", f"{base}...{agent['branch']}", cwd=store.repo)[:60000]
     prompt = (f"Review this change for correctness and for breaking other code. Task was: {agent['task']}\n\n"
               f"```diff\n{diff}\n```\n\nEnd your answer with exactly one line: "
@@ -186,7 +186,7 @@ def _land(store, name, push):
         return LandResult(False, f"no agent named {name}")
     if agent["status"] in ("landed", "done"):
         return LandResult(False, f"{name} is already {agent['status']}")
-    repo, base, branch = store.repo, store.base_branch(), agent["branch"]
+    repo, base, branch = store.repo, store.agent_base(agent), agent["branch"]
     if Path(agent["worktree"]).is_dir() and not gitutil.is_clean(agent["worktree"]):
         return LandResult(False, f"{name} has uncommitted changes; commit them first", waiting=True)
     base_oid = gitutil.rev(base, cwd=repo)
@@ -296,7 +296,7 @@ def sync(store, name):
     """Merge the latest base into an agent's branch, in its worktree. Returns (ok, message, conflicted_files)."""
     agent = store.agent(name)
     wt = agent["worktree"]
-    base = store.base_branch()
+    base = store.agent_base(agent)
     rc, out = gitutil.git("merge", "--autostash", "--no-edit", base, cwd=wt, check=False)
     if rc == 0:
         if agent["status"] == "blocked":
@@ -314,7 +314,7 @@ def push_base(store, branches=False):
     rc, _ = gitutil.git("remote", "get-url", remote, cwd=store.repo, check=False)
     if rc != 0:
         return False, f"no remote named {remote}; add one with: braid remote add {remote} <url>"
-    refs = [store.base_branch()]
+    refs = [b for b in store.bases_in_use() if gitutil.rev(b, cwd=store.repo)]
     if branches:
         refs += [a["branch"] for a in store.live_agents()]
     proc = subprocess.run(["git", "push", remote, *refs], cwd=store.repo, capture_output=True, text=True)
