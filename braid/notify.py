@@ -121,8 +121,22 @@ def short_text(store, a, limit=1500, fence="```", hint=True):
     return text if len(text) <= limit else text[: limit - 1] + "…"
 
 
+def email_text(store, a, url):
+    """Plain-text part of the approval email: short when there's a page to open, full otherwise."""
+    if not url:
+        return short_text(store, a, limit=100000)
+    r = a["report"]
+    from .review_page import _anchor
+    agents = "".join(f"- {g['name']} (+{g['added']}/-{g['removed']}): {url}#{_anchor(g['name'])}\n"
+                     for g in r.get("agents") or [])
+    return (f"{r['title']}\n\n{r['summary']}\n\n" + (f"Agents in this run:\n{agents}\n" if agents else "")
+            + f"Review and land: {url}\n\n"
+            f"Or reply yes to land it, or no and a reason to send it back.\n")
+
+
 def subject(a):
-    return f"[braid {a['code']}] Approve {a['agent']}: {a['report']['title']}"
+    who = f"the run on {a['report']['base']}" if a["agent"].startswith("run:") else a["agent"]
+    return f"[braid {a['code']}] Approve {who}: {a['report']['title']}"
 
 
 # ------------------------------------------------------------------ send
@@ -193,7 +207,7 @@ def send_email(store, a):
     msg["From"] = store.cfg("approve.email.from") or user or to
     msg["To"] = to
     msg["Message-ID"] = email.utils.make_msgid("braid")
-    msg.set_content(short_text(store, a, limit=100000))
+    msg.set_content(email_text(store, a, review_url(store, a)))
     msg.add_alternative(review_page.render(store, a, mode="email", url=review_url(store, a)), subtype="html")
     if not review_url(store, a):  # no page to link to: attach it so the full review opens in a browser
         msg.add_attachment(review_page.render(store, a, mode="static").encode(), maintype="text",
@@ -309,7 +323,7 @@ def send_cloudflare(store, a):
     r = _http(f"{url}/api/approvals", bearer=key, timeout=60, json_body={
         "key": remote_key(store, a), "code": a["code"], "token": a["token"], "diff": a["diff"][:1_000_000],
         "html": review_page.render(store, a, mode="web", page_id=remote_key(store, a)),
-        "email": {"subject": subject(a), "text": short_text(store, a, limit=100000),
+        "email": {"subject": subject(a), "text": email_text(store, a, link),
                   "html": review_page.render(store, a, mode="email", url=link)}})
     if not str(r.get("email", "")).startswith(("sent", "not requested")):
         store.event("notify", f"worker email for approval #{a['id']}: {r.get('email')}", a["agent"])

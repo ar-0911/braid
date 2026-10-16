@@ -9,7 +9,7 @@ import sys
 import time
 from pathlib import Path
 
-from . import __version__, approvals_cli, gitutil, land, notify, planner, predict, structmerge
+from . import __version__, approvals_cli, gitutil, land, notify, planner, predict, runapprove, structmerge
 from .store import DEFAULTS, Store
 
 HOOK_MARKER = "# installed by braid"
@@ -619,6 +619,8 @@ def tick(store, auto_land=None):
                 planner.advance(store, plan_starter(store))
     replies = notify.poll(store)  # yes/no replies to approval requests; a yes lands right away
     results += [("approval", land.LandResult(True, msg)) for msg in replies]
+    for msg in runapprove.retry_approved(store) + runapprove.check(store):  # approve.mode run: one ask per run
+        results.append(("run", land.LandResult(False, msg, waiting=True)))
     if replies and store.plans("running"):
         planner.advance(store, plan_starter(store))
     return new, results
@@ -699,6 +701,7 @@ def cmd_land(args):
             print(land.push_base(store)[1])
     else:
         results = land.land_ready(store, push=args.push)
+    results += [("run", land.LandResult(False, m, waiting=True)) for m in runapprove.check(store)]
     if not results:
         print("nothing is ready to land. agents mark themselves ready, or: braid ready <agent>")
     failed = False
@@ -714,6 +717,8 @@ def cmd_ship(args):
     results = land.land_ready(store, push=False)
     for name, r in results:
         print(f"{'landed ' if r.ok else 'skipped'} {name}: {r.message}")
+    for m in runapprove.check(store):
+        print(f"waiting {m}")
     ok, out = land.push_base(store, branches=args.branches)
     print(("pushed " if ok else "push failed: ") + (out or store.base_branch()))
     sys.exit(0 if ok else 1)
