@@ -131,6 +131,10 @@ def cmd_init(args):
         exclude.write_text(ex.rstrip("\n") + ("\n" if ex.strip() else "") + "\n".join([ATTR_BEGIN] + junk + [ATTR_END]) + "\n")
 
     # remember conflict resolutions so they replay automatically
+    # keep `git status` (and so braid's snapshots) fast in big repos
+    gitutil.git("config", "core.untrackedCache", "true", cwd=root)
+    if sys.platform in ("darwin", "win32"):  # git's built-in file watcher only exists there
+        gitutil.git("config", "core.fsmonitor", "true", cwd=root)
     gitutil.git("config", "rerere.enabled", "true", cwd=root)
     gitutil.git("config", "rerere.autoupdate", "true", cwd=root)
 
@@ -456,7 +460,8 @@ def render_status(store):
     if risks:
         lines.append("\n" + color("predicted", "1"))
         for r in risks:
-            sev = color("CONFLICT", "31") if r["severity"] == "conflict" else color("overlap ", "33")
+            sev = {"conflict": color("CONFLICT", "31"), "semantic": color("SEMANTIC", "35")}.get(
+                r["severity"], color("overlap ", "33"))
             lines.append(f"  {sev} {r['a']} <-> {r['b']}: {', '.join(r['files'])}")
     open_d = [d for d in store.decisions() if d["status"] in ("proposed", "escalated")]
     if open_d:
@@ -595,6 +600,8 @@ def tick(store, auto_land=None):
     if store.plans("running"):
         planner.advance(store, plan_starter(store))  # start tasks whose dependencies have landed
     _, new = predict.check(store)
+    if any(not ok for _, _, ok in predict.test_merges(store)):
+        predict.check(store)  # publish the failing merge as a risk now
     results = []
     if store.cfg_bool("land.auto") if auto_land is None else auto_land:
         landed_any = False

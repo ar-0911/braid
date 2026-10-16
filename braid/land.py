@@ -10,7 +10,7 @@ import subprocess
 import time
 from pathlib import Path
 
-from . import approve, gitutil
+from . import approve, gitutil, regen
 
 MARKER = re.compile(r"^(<<<<<<<|>>>>>>>)( |$)", re.M)
 
@@ -88,6 +88,62 @@ def run_tests(store, cwd):
     return proc.returncode == 0, tail
 
 
+def run_tests_retrying(store, cwd, what):
+    """Run the tests; on failure retry up to test.retries times. A pass on retry is flagged as flaky."""
+    passed, output = run_tests(store, cwd)
+    for attempt in range(int(store.cfg("test.retries") or 0)):
+        if passed:
+            break
+        passed, retry_output = run_tests(store, cwd)
+        if passed:
+            store.event("flaky", f"tests failed, then passed on retry {attempt + 1} while {what}. The suite may "
+                                 f"be flaky:\n{output[-800:]}")
+            store.set_meta("tests.flaky_at", time.time())
+        output = retry_output
+    return passed, output
+
+
+def base_tests_red(store, base):
+    """True when the tests are known to fail on the base branch as it is now."""
+    state = store.get_meta(f"tests.base.{base}", "")
+    oid = gitutil.rev(base, cwd=store.repo)
+    return bool(oid) and state == f"{oid}:fail"
+
+
+def check_base_tests(store, base, base_oid, cwd):
+    """Run the tests on the base itself (cached per commit). Returns True if they pass there."""
+    state = store.get_meta(f"tests.base.{base}", "")
+    if state.startswith(base_oid + ":"):
+        return state.endswith(":pass")
+    gitutil.git("merge", "--abort", cwd=cwd, check=False)
+    gitutil.git("checkout", "--detach", "-f", base_oid, cwd=cwd)
+    gitutil.git("clean", "-fd", cwd=cwd)
+    passed, output = run_tests_retrying(store, cwd, f"checking {base}")
+    store.set_meta(f"tests.base.{base}", f"{base_oid}:{'pass' if passed else 'fail'}")
+    if not passed:
+        store.event("tests", f"tests fail on {base} itself ({base_oid[:10]}); landings onto it wait until it's "
+                             f"fixed:\n{output[-800:]}")
+        store.post_note("braid", "tests", f"The tests fail on {base} itself, before any agent's work is merged, so "
+                                          f"nothing can land on it until that's fixed. Output:\n{output[-1500:]}")
+    return passed
+
+
+def run_tests_on_tree(store, tree, parents):
+    """Run the tests on an arbitrary tree (e.g. a predicted merge) in a scratch worktree."""
+    commit = gitutil.out("commit-tree", tree, *sum((["-p", p] for p in parents), []), "-m", "braid predicted merge",
+                         cwd=store.repo, env={"GIT_AUTHOR_NAME": "braid", "GIT_AUTHOR_EMAIL": "braid@localhost",
+                                              "GIT_COMMITTER_NAME": "braid", "GIT_COMMITTER_EMAIL": "braid@localhost"})
+    path = store.repo.parent / f"{store.repo.name}.agents" / ".predict"
+    if not (path / ".git").exists():
+        path.parent.mkdir(parents=True, exist_ok=True)
+        gitutil.git("worktree", "prune", cwd=store.repo)
+        gitutil.git("worktree", "add", "--detach", str(path), commit, cwd=store.repo)
+    else:
+        gitutil.git("checkout", "--detach", "-f", commit, cwd=path)
+        gitutil.git("clean", "-fd", cwd=path)
+    return run_tests(store, path)
+
+
 def prepare_integration(store, base_oid):
     path = integration_dir(store)
     if not (path / ".git").exists():
@@ -156,6 +212,45 @@ def resolve(store, agent, parties, files, cwd):
     return True, summary[:500]
 
 
+def conflict_sides(cwd, files):
+    """{file: (base, ours, theirs)} text of each side of a conflict in progress."""
+    sides = {}
+    for f in files:
+        sides[f] = tuple(gitutil.git("show", f":{n}:{f}", cwd=cwd, check=False)[1] for n in (1, 2, 3))
+    return sides
+
+
+def verify_resolution(store, agent, sides, cwd):
+    """A second, independent opinion on the resolver's work. Returns (ok, reason)."""
+    template = store.cfg("resolve.verify_command")
+    if not store.cfg_bool("resolve.verify") or not template:
+        return True, "not verified"
+    parts = []
+    for f, (base, ours, theirs) in sides.items():
+        try:
+            merged = (Path(cwd) / f).read_text(errors="replace")
+        except OSError:
+            merged = "(deleted)"
+        parts.append(f"## {f}\n### common ancestor\n{base[:8000]}\n### base branch (ours)\n{ours[:8000]}\n"
+                     f"### incoming from {agent['name']} (theirs)\n{theirs[:8000]}\n### proposed resolution\n"
+                     f"{merged[:12000]}")
+    prompt = ("Check a merge conflict resolution made by another AI. For each file you get the common ancestor, both "
+              f"sides and the proposed result. The incoming task was: {agent['task']}\n\n" + "\n\n".join(parts)
+              + "\n\nDoes the resolution keep the intent of BOTH sides, without dropping changes or inventing "
+              "behaviour, and is it correct code? End with one line: 'VERDICT: approve' or 'VERDICT: changes', "
+              "preceded by a one-paragraph reason.")
+    try:
+        proc = run_template(template, prompt, cwd=cwd, timeout=900)
+    except subprocess.TimeoutExpired:
+        return False, "the resolution checker timed out"
+    text = proc.stdout.strip()
+    m = re.search(r"VERDICT:\s*(approve|changes)", text, re.I)
+    if proc.returncode != 0 or not m:
+        return False, f"the resolution checker gave no verdict: {(proc.stderr or text).strip()[-300:]}"
+    reason = text[: m.start()].strip().splitlines()[-1] if text[: m.start()].strip() else "no reason given"
+    return m.group(1).lower() == "approve", reason[:500]
+
+
 def await_consensus(store, did, parties):
     """Parties may object during the consensus window. Returns (accepted, detail)."""
     window = float(store.cfg("consensus.window") or 0)
@@ -209,6 +304,10 @@ def _land(store, name, push):
     if approval and approval["status"] == "approved" and approval["base_oid"] == base_oid:
         return _finish(store, agent, base_oid, approval["proposal_oid"], push, approval)  # exactly what was approved
 
+    if base_tests_red(store, base) and store.get_meta(f"redtry.{name}") == f"{base_oid}:{head}":
+        # already tried this exact work on this broken base; a new commit (maybe the fix) gets a new try
+        return LandResult(False, f"waiting: the tests fail on {base} itself; fix {base} first", waiting=True)
+
     integ = prepare_integration(store, base_oid)
     reviewers = [r["reviewer"] for r in store.reviews(name, head) if r["verdict"] == "approve"]
     msg = (f"braid: land {name}\n\n{agent['task']}\n\nBraid-Agent: {name}\n"
@@ -216,6 +315,24 @@ def _land(store, name, push):
     rc, _ = gitutil.git("merge", "--no-ff", "-m", msg, branch, cwd=integ, check=False)
 
     did, parties = None, set()
+    rules = regen.rules(store)
+    if rules:
+        mb = gitutil.out("merge-base", base_oid, head, cwd=repo)
+        conflicted = set(gitutil.conflicted_files(integ)) if rc != 0 else set()
+        both = gitutil.changed_paths(base_oid, head, cwd=repo) & gitutil.changed_paths(head, base_oid, cwd=repo)
+        targets = regen.generated(conflicted | both, rules)
+        if targets:
+            ok, detail = regen.regenerate(store, integ, targets, conflicted, rules)
+            if not ok:
+                gitutil.git("merge", "--abort", cwd=integ, check=False)
+                return _block(store, name, f"could not rebuild generated files while landing: {detail}")
+            store.event("regen", detail, name)
+            if rc == 0:
+                if gitutil.out("status", "--porcelain", "--untracked-files=no", cwd=integ):
+                    gitutil.git("commit", "-q", "--amend", "--no-edit", cwd=integ)
+            elif not gitutil.conflicted_files(integ):
+                gitutil.git("commit", "-q", "--no-edit", cwd=integ)
+                rc = 0
     if rc != 0:
         files = gitutil.conflicted_files(integ)
         if not files:
@@ -224,7 +341,14 @@ def _land(store, name, push):
         mb = gitutil.out("merge-base", base_oid, head, cwd=repo)
         parties = landed_agents_touching(store, mb, base_oid, files)
         store.event("resolve", f"conflicts with {', '.join(sorted(parties))} in {', '.join(files)}; resolving", name)
+        sides = conflict_sides(integ, files)
         resolved, detail = resolve(store, agent, parties, files, integ)
+        if resolved:
+            verified, why = verify_resolution(store, agent, sides, integ)
+            if not verified:
+                resolved, detail = False, f"a second check rejected the resolution: {why}"
+            elif why != "not verified":
+                detail += f" (checked: {why})"
         if not resolved:
             gitutil.git("merge", "--abort", cwd=integ, check=False)
             did = store.add_decision(name, parties, files, "escalated", None, detail)
@@ -237,7 +361,13 @@ def _land(store, name, push):
                             f"Decision #{did}: conflicts between {name} and {', '.join(sorted(parties))} in "
                             f"{', '.join(files)} were resolved: {detail}. Use vote to accept or object.", to=p)
 
-    passed, output = run_tests(store, integ)
+    passed, output = run_tests_retrying(store, integ, f"landing {name}")
+    if not passed and store.cfg("test.command") and not check_base_tests(store, base, base_oid, integ):
+        if did:
+            store.decide(did, "rejected", f"tests fail on {base} itself")
+        store.set_meta(f"redtry.{name}", f"{base_oid}:{head}")
+        return LandResult(False, f"waiting: the tests fail on {base} itself, so this isn't {name}'s fault; "
+                                 f"fix {base} first", waiting=True)
     if not passed:
         if did:
             store.decide(did, "rejected", "tests failed on the resolution")

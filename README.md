@@ -143,6 +143,8 @@ WhatsApp note: Twilio only delivers free-form messages within 24 hours of your l
 
 **2. Early conflict prediction.** Every few seconds braid snapshots each worktree into a commit using a throwaway index (the agent's files and index are never touched), then runs `git merge-tree --write-tree` between every pair of agents and against `main`. That is git's real merge engine running in memory. A new conflict is posted to both agents, so they sort it out mid-task.
 
+It also looks for **semantic conflicts**, which merge cleanly as text but break the code: when one side removes or renames a function, class or method that the other side's new code still calls, both get a warning naming the use. And when two agents' committed work overlaps and merges cleanly, the watcher runs your tests on the combination (each side alone must pass first, so a failure points at the mix). Unchanged worktrees and already-merged pairs are skipped, so an idle agent costs one `git status` per pass.
+
 **3. Code-aware merging.** `braid init` registers a git merge driver for Python and brace languages (JS/TS, Go, Rust, Java, Kotlin, C/C++, C#, Swift, PHP, Scala, Dart). It merges by function, class, method and import rather than by line, so two agents adding different functions, methods or imports to the same file merge cleanly. It works in every git merge in the repo, including the predictor's. Only an entity changed differently on both sides falls back to a line merge, and anything it can't parse falls back to plain git. `rerere` is on, so a resolution is replayed if the same conflict comes back.
 
 **4. Review.** When an agent finishes it calls `ready_to_land`; other agents see it in `pending_reviews` and approve or request changes. A review is tied to the exact commit, so new commits need a new review. `review.required`: `auto` (default: needs a peer's approval while a peer is still running), `yes`, `no`, or set `review.command` for an automatic reviewer.
@@ -150,13 +152,16 @@ WhatsApp note: Twilio only delivers free-form messages within 24 hours of your l
 **5. Landing and auto-consensus.** The merge queue merges each ready agent into `main` in a private integration worktree:
 
 1. Merge with the code-aware driver and rerere. Most overlaps end here.
-2. Anything still conflicted goes to a **neutral resolver** (a separate agent; `resolve.command`). It is given both sides' tasks, declared intents and notes, and told to keep both intents.
-3. The **tests** (`test.command`) must pass on the merged result.
-4. The agents whose work is in the conflict are notified with a decision number and can `vote` accept or object during `consensus.window` seconds. An objection stops it.
-5. Otherwise `main` moves forward atomically. If `main` is checked out, it is fast-forwarded in place.
-6. If any step fails, the agent is marked **blocked** with the reason in its notes, and the watcher relaunches it to `sync` and fix it itself. The deterministic tie-break is *first to land wins; the later agent adapts*. After `agent.auto_resume` attempts it waits for you.
+2. **Generated files** (lockfiles, snapshots) matching a `regen` rule are rebuilt with their command instead of text-merged.
+3. Anything still conflicted goes to a **neutral resolver** (a separate agent; `resolve.command`). It is given both sides' tasks, declared intents and notes, and told to keep both intents. A **second model** (`resolve.verify_command`) then checks the result against both sides and can reject it.
+4. The **tests** (`test.command`) must pass on the merged result. A failure is retried (`test.retries`), and a pass on retry is flagged as flaky. If the tests also fail on the base branch itself, the agent isn't blamed: it waits until the base is fixed.
+5. The agents whose work is in the conflict are notified with a decision number and can `vote` accept or object during `consensus.window` seconds. An objection stops it.
+6. Otherwise `main` moves forward atomically. If `main` is checked out, it is fast-forwarded in place.
+7. If any step fails, the agent is marked **blocked** with the reason in its notes, and the watcher relaunches it to `sync` and fix it itself. The deterministic tie-break is *first to land wins; the later agent adapts*. After `agent.auto_resume` attempts it waits for you.
 
 Every landing is a merge commit with `Braid-Agent:` and `Reviewed-by:` trailers, so `git log` shows who did what and who checked it.
+
+Guard rails for agents: `ready_to_land` refuses while the agent has unread conflict or blocked warnings, or while its work uses names the base branch has since removed. An agent that can't get a hard lease is queued and gets a note when it frees. `braid do` chains tasks that own the same non-code file (config, JSON, docs) and tells the planner which files change most often.
 
 **6. Push.** `braid push` / `braid ship` push `main` (and agent branches with `--branches`) to `remote` (default `origin`). Set `push.auto true` to push after every landing.
 
@@ -176,6 +181,12 @@ Every landing is a merge commit with `Braid-Agent:` and `Reviewed-by:` trailers,
 | `agent.command` | Claude Code, headless, with braid's MCP tools and git allowed | how agents are launched; `{prompt}`, `{mcp_config}`, `{name}` |
 | `agent.auto_resume` | `2` | relaunches for an agent that stopped with feedback to handle |
 | `watch.interval` | `5` | seconds between watcher passes |
+| `predict.tests` | `true` | run the tests on clean merges of overlapping agents' commits |
+| `regen` | (none) | generated files: `"package-lock.json=npm install --package-lock-only; *.snap=ours"` (a command, `ours` or `theirs`) |
+| `resolve.verify` | `true` | a second model checks every automatic resolution |
+| `resolve.verify_command` | Claude Code, read-only | the checker; must print `VERDICT: approve` or `VERDICT: changes` |
+| `test.retries` | `1` | re-runs of a failing suite before it counts as failed |
+| `plan.serialize` | `true` | tasks owning the same non-code file run one after the other |
 | `plan.command` | Claude Code, headless, read-only tools | the planner for `braid do`; `{prompt}` is filled in |
 | `plan.max_tasks` | `6` | most tasks a plan may have (`--max-agents` overrides) |
 | `approve.required` | `no` | `yes`: every landing waits for your yes |
@@ -204,13 +215,13 @@ Use a different agent CLI: `braid settings agent.command "my-agent --mcp {mcp_co
 python -m unittest discover -s tests -v
 ```
 
-59 tests, including end-to-end runs where `braid start` and `braid do` launch real processes (scripted fake agents) and the watcher reviews, resolves and lands them.
+70 tests, including end-to-end runs where `braid start` and `braid do` launch real processes (scripted fake agents) and the watcher reviews, resolves and lands them.
 
 ## Status and roadmap
 
 Milestones done: worktree launcher and shared memory (M1), code-aware merge (M2), review, resolution and consensus (M3), merge queue, sync and push (M4), git-compatible CLI and packaging (M5), `braid do` with dependency waves, feature-branch bases and lead-session delegation (M6).
 
-Next ideas: entity-level merge inside classes for brace languages, a web dashboard, `braid pr` to open one pull request per landing, running agents in containers, and predicting *semantic* conflicts by running tests on the predicted merge.
+Next ideas: entity-level merge inside classes for brace languages, a web dashboard, `braid pr` to open one pull request per landing, running agents in containers, tree-sitter parsing for the code-aware merge, and a shared state server so agents on several machines can work together.
 
 See [docs/design.md](docs/design.md) for the research and design behind this.
 
