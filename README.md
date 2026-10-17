@@ -104,6 +104,7 @@ WhatsApp note: Twilio only delivers free-form messages within 24 hours of your l
 | plan and run a goal | `braid do "goal"`, then `braid plans`, `braid plans show 1`, `braid plans cancel 1` |
 | use braid from your Claude session | `braid connect` |
 | see everything | `braid status [--live]` (also shows `git status` for where you are) |
+| just the agents | `braid agents` (in a repo where braid isn't set up yet, `braid status` is plain `git status` plus a note to run `braid init`) |
 | activity / messages | `braid feed -f`, `braid chat`, `braid chat --post "use the v2 API" --to login` |
 | check conflicts now | `braid check` (exit 1 when a conflict is predicted, handy in scripts) |
 | review an agent yourself | `braid review login` then `--approve` or `--changes -m "why"` |
