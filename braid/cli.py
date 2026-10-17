@@ -921,6 +921,7 @@ def build_parser():
     s.add_argument("--live", action="store_true", help="keep refreshing")
     s.add_argument("--refresh", action="store_true", help="run a fresh conflict check first")
 
+    add("agents", cmd_agents, "just the agents, plans and predicted conflicts (braid status without git's part)")
     s = add("feed", cmd_log, "activity feed: what every agent and braid did")
     s.add_argument("-n", type=int, default=30)
     s.add_argument("-f", "--follow", action="store_true")
@@ -1021,6 +1022,27 @@ def _braid_repo():
         return False
 
 
+def _status_hint(extra):
+    try:
+        gitutil.common_dir()
+    except gitutil.GitError:
+        return "\nbraid: this folder isn't a git repo, so there are no agents here. cd into your project first."
+    if not _braid_repo():
+        return ("\nbraid: braid isn't set up in this repo yet, so that was plain git status.\n"
+                "       run `braid init` here once, then `braid do \"goal\"` or `braid start \"task\"`, "
+                "and `braid status` shows the agents.")
+    return (f"\nbraid: {' '.join(extra)} is a git flag, so that was plain git status. "
+            "For the agents: `braid status`, `braid status --live` or `braid agents`.")
+
+
+def cmd_agents(args):
+    if not _braid_repo():
+        print("braid isn't set up in this repo yet, so there are no agents. Run `braid init` here once, then "
+              "`braid do \"goal\"` or `braid start \"task\"`.", file=sys.stderr)
+        sys.exit(1)
+    print(render_status(open_store()))
+
+
 def main(argv=None):
     argv = sys.argv[1:] if argv is None else argv
     parser, commands = build_parser()
@@ -1029,6 +1051,10 @@ def main(argv=None):
     if argv and argv[0] in GIT_SHARED:
         args, extra = parser.parse_known_args(argv)
         if extra or (argv[0] != "init" and not _braid_repo()):
+            if argv[0] == "status":  # behave like git, but say why there are no agents in the output
+                rc = subprocess.run(["git", *argv]).returncode
+                print(color(_status_hint(extra), "33"), file=sys.stderr)
+                sys.exit(rc)
             os.execvp("git", ["git", *argv])  # git's own flags, or not a braid repo: behave exactly like git
     else:
         args = parser.parse_args(argv)
