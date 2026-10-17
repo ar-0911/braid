@@ -1,8 +1,14 @@
 # braid: run several coding agents on one repo
 
-braid (https://github.com/ar-0911/braid) is installed and connected as an MCP server called `braid`. It gives you
-`delegate`, `start_agents` and `team_status`. Each agent works in its own branch and worktree. braid reviews,
-merges, tests and lands their work on the base branch, and asks me for a yes by email before anything lands.
+"braid" always means my own tool, installed on this machine: the `braid` command on PATH
+(https://github.com/ar-0911/braid). It is not a library, framework or package to search for, look up online or
+install, whatever else is called braid.
+
+It is connected to Claude Code as an MCP server named `braid`, whose tools are `mcp__braid__delegate`,
+`mcp__braid__start_agents` and `mcp__braid__team_status`. If you don't see them, look them up with tool search
+("braid delegate") before deciding they're missing. Each agent works in its own branch and worktree. braid
+reviews, merges, tests and lands their work on the base branch, and asks me for a yes by email before anything
+lands.
 
 ## When to use it
 
@@ -40,6 +46,9 @@ before. Do those yourself.
 
 ## If something's missing
 
-- No `braid` tools in this session: tell me to run `braid connect --scope user`, then restart Claude Code.
+- No `mcp__braid__*` tools even after tool search: use the command line instead. Run
+  `braid do --yes "<goal>"` from the repo (add `--base feature/<name>` for a big feature), then `braid status`
+  to report. Also tell me to run `braid connect --scope user` and restart Claude Code so the tools are there
+  next time.
 - "not in a git repo": braid only works inside a git repo. Ask me before running `git init`.
 - Useful commands for me: `braid status`, `braid feed` (activity), `braid approvals`, `braid doctor`.

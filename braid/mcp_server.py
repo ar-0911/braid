@@ -67,6 +67,18 @@ TOOLS = [
 ]
 
 
+AGENT_INSTRUCTIONS = ("braid connects agents working in parallel on one repo. Check peers and risks before "
+                      "editing shared files, declare_intent before each subtask, read_notes often, review others "
+                      "with pending_reviews, and finish with ready_to_land.")
+LEAD_INSTRUCTIONS = ("This is braid, the user's own multi-agent tool installed on this machine (not a library or "
+                     "package to look up or install). When the user says \"use braid\", \"delegate\" or \"get "
+                     "agents on it\", call this server's delegate tool with their goal (or start_agents with tasks "
+                     "you have already split), then report the plan and follow it with team_status. braid starts "
+                     "the agents, reviews, merges, tests and lands their work in the git repo you are in, and asks "
+                     "the user to approve before anything lands. Commit uncommitted work before delegating; don't "
+                     "edit, merge or push the agents' branches yourself.")
+
+
 class Server:
     def __init__(self, repo, agent):
         self.store = Store(repo) if repo else None
@@ -224,9 +236,7 @@ class Server:
                 "protocolVersion": msg.get("params", {}).get("protocolVersion", PROTOCOL_VERSION),
                 "capabilities": {"tools": {}},
                 "serverInfo": {"name": "braid", "version": __version__},
-                "instructions": "braid connects agents working in parallel on one repo. Check peers and risks "
-                                "before editing shared files, declare_intent before each subtask, read_notes often, "
-                                "review others with pending_reviews, and finish with ready_to_land.",
+                "instructions": AGENT_INSTRUCTIONS if self.agent != "human" else LEAD_INSTRUCTIONS,
             })
         if method == "ping":
             return ok(mid, {})

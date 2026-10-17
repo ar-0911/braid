@@ -809,6 +809,16 @@ def cmd_doctor(args):
         check("inside a git repo", False, "run braid init")
     from shutil import which
     check(f"agent CLI '{agent_bin}' on PATH", bool(which(agent_bin)), "install Claude Code or set agent.command")
+    if which("claude"):  # can your own Claude Code session reach braid?
+        try:
+            r = subprocess.run(["claude", "mcp", "get", "braid"], capture_output=True, text=True, timeout=30)
+            connected = r.returncode == 0
+        except (OSError, subprocess.TimeoutExpired):
+            connected = False
+        check("Claude Code has braid's tools", connected, "braid connect --scope user, then restart Claude Code")
+        md = Path.home() / ".claude" / "CLAUDE.md"
+        check("~/.claude/CLAUDE.md tells Claude about braid", md.exists() and "braid" in md.read_text(),
+              "copy docs/CLAUDE.md from the braid repo there")
 
 
 def cmd_connect(args):
