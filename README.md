@@ -101,9 +101,13 @@ WhatsApp note: Twilio only delivers free-form messages within 24 hours of your l
 braid dashboard        # opens http://127.0.0.1:8770 in your browser
 ```
 
-One page for everything `braid status`, `feed`, `chat`, `plans` and `approvals` show, refreshed every two seconds, with buttons for what you'd otherwise type: plan a goal or start tasks, see an agent's diff, approve or ask for changes, land, sync, resume, stop or drop an agent, accept or object to a conflict resolution, land or send back a change waiting for your yes, chat with one agent or all of them, start and stop the watcher, and edit settings. A **Needs you** box at the top lists whatever is waiting on you.
+The home screen answers three questions, top to bottom:
 
-The **Commands** tab has a form for every braid command, built from the CLI's own options, so nothing the CLI can do is missing, plus a box to type any braid or git command. Every button runs the real command in your repo and shows its output, so the page and the terminal always agree. The page listens on this machine only (`--bind` to change it), and every request needs the secret key in the link it prints. Closing it stops nothing: agents and the watcher keep running.
+1. **Does anything need me?** Work waiting for your OK (Land it, See changes, Send back), an automatic conflict fix to keep or reject, and any agent that is stuck (Tell it what to do). This box only appears when there is something in it.
+2. **What are my agents doing?** One line per agent with its task and a plain status: Working, Done, Waiting for your OK, Stuck, Landed. Click a line for that agent's details and every action on it (message, resume, see changes, sync, pause, remove).
+3. **What next?** Describe the work and press Start. braid plans it into parallel tasks (`braid do`); under Options you can give one task per line instead, pick the branch to land on, or cap the number of agents.
+
+The menu (top right) holds the rest: messages, possible conflicts and the activity log; **Every command**, a form for each braid command built from the CLI's own options plus a box for any braid or git command, so nothing the CLI can do is missing; settings; what you ran from the page; and land all, push, the watcher switch and stop all. Every button runs the real command in your repo, and a small bar at the bottom shows it running, with its output one click away. The page listens on this machine only (`--bind` to change it), and every request needs the secret key in the link it prints. Closing it stops nothing: agents and the watcher keep running.
 
 ### Everyday commands
 
@@ -236,7 +240,7 @@ python -m unittest discover -s tests -v
 
 Milestones done: worktree launcher and shared memory (M1), code-aware merge (M2), review, resolution and consensus (M3), merge queue, sync and push (M4), git-compatible CLI and packaging (M5), `braid do` with dependency waves, feature-branch bases and lead-session delegation (M6).
 
-Next ideas: entity-level merge inside classes for brace languages, a web dashboard, `braid pr` to open one pull request per landing, running agents in containers, tree-sitter parsing for the code-aware merge, and a shared state server so agents on several machines can work together.
+Next ideas: entity-level merge inside classes for brace languages, `braid pr` to open one pull request per landing, running agents in containers, tree-sitter parsing for the code-aware merge, and a shared state server so agents on several machines can work together.
 
 See [docs/design.md](docs/design.md) for the research and design behind this.
 
