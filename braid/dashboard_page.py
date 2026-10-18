@@ -6,194 +6,286 @@ PAGE = r"""<!doctype html>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="braid-token" content="__TOKEN__">
-<title>braid dashboard</title>
+<meta name="color-scheme" content="dark">
+<title>braid</title>
 <style>
-:root{--bg:#f6f7f9;--panel:#fff;--ink:#16191d;--muted:#5d6672;--line:#e3e6ea;--soft:#f0f2f5;
---accent:#3b5bdb;--accent-ink:#fff;--ok:#2b8a3e;--warn:#b7791f;--bad:#c92a2a;--purple:#7048e8;--cyan:#0b7285;
---mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;--radius:10px}
-@media (prefers-color-scheme:dark){:root{--bg:#0f1115;--panel:#171a20;--ink:#e6e8eb;--muted:#9aa3ad;--line:#2a2f37;
---soft:#1e222a;--accent:#748ffc;--accent-ink:#0f1115;--ok:#51cf66;--warn:#fcc419;--bad:#ff6b6b;--purple:#b197fc;--cyan:#66d9e8}}
+:root{--bg:#05080d;--panel:rgba(10,22,34,.72);--panel2:rgba(14,30,46,.85);--line:rgba(80,200,255,.16);--line2:rgba(80,200,255,.32);
+--ink:#d8f3ff;--muted:#7d9bb0;--dim:#4d6678;--cyan:#38e1ff;--cyan2:#0fb5d9;--glow:0 0 18px rgba(56,225,255,.35);
+--ok:#4cf2a0;--warn:#ffc552;--bad:#ff5f6d;--violet:#a98bff;
+--mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;--r:12px}
 *{box-sizing:border-box}
-body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.45 system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
-header{position:sticky;top:0;z-index:5;background:var(--panel);border-bottom:1px solid var(--line);
-padding:10px 16px;display:flex;flex-wrap:wrap;gap:10px;align-items:center}
-header h1{font-size:16px;margin:0 8px 0 0;font-weight:650}
-header .repo{color:var(--muted);font-family:var(--mono);font-size:12.5px}
-.spacer{flex:1}
-nav{display:flex;gap:2px;background:var(--soft);padding:3px;border-radius:8px}
-nav button{border:0;background:transparent;color:var(--muted);padding:5px 12px;border-radius:6px;cursor:pointer;font:inherit}
-nav button.on{background:var(--panel);color:var(--ink);box-shadow:0 1px 2px rgba(0,0,0,.08)}
-main{padding:16px;max-width:1400px;margin:0 auto}
-.grid{display:grid;grid-template-columns:minmax(0,1fr) 380px;gap:16px}
-@media (max-width:980px){.grid{grid-template-columns:1fr}}
-.card{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);padding:14px 16px;margin-bottom:16px}
-.card h2{font-size:13px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted);margin:0 0 10px;font-weight:600;
-display:flex;align-items:center;gap:8px}
-.card h2 .count{background:var(--soft);color:var(--ink);border-radius:99px;padding:0 8px;font-size:12px}
-button.btn{font:inherit;border:1px solid var(--line);background:var(--panel);color:var(--ink);border-radius:7px;
-padding:5px 11px;cursor:pointer;white-space:nowrap}
-button.btn:hover{border-color:var(--muted)}
-button.btn.primary{background:var(--accent);border-color:var(--accent);color:var(--accent-ink)}
-button.btn.danger{color:var(--bad)}
-button.btn.small{padding:2px 8px;font-size:12.5px}
-button.btn:disabled{opacity:.5;cursor:default}
-input,textarea,select{font:inherit;color:var(--ink);background:var(--panel);border:1px solid var(--line);border-radius:7px;padding:6px 9px;width:100%}
-textarea{min-height:74px;resize:vertical}
-label.inline{display:inline-flex;gap:6px;align-items:center;color:var(--muted);font-size:13px;white-space:nowrap}
-label.inline input{width:auto}
-.row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
-.row > .grow{flex:1;min-width:160px}
-.pill{display:inline-flex;align-items:center;gap:5px;border-radius:99px;padding:1px 9px;font-size:12px;font-weight:600;
-background:var(--soft);color:var(--muted);white-space:nowrap}
-.pill::before{content:"";width:7px;height:7px;border-radius:50%;background:currentColor}
-.s-active{color:var(--cyan)}.s-ready{color:var(--warn)}.s-landed{color:var(--ok)}.s-blocked{color:var(--bad)}
-.s-exited{color:var(--purple)}.s-paused,.s-done{color:var(--muted)}.s-running{color:var(--ok)}.s-stopped{color:var(--muted)}
-.s-pending{color:var(--warn)}.s-approved{color:var(--ok)}.s-rejected,.s-failed{color:var(--bad)}
-.agents{display:grid;grid-template-columns:repeat(auto-fill,minmax(310px,1fr));gap:12px}
-.agent{border:1px solid var(--line);border-radius:var(--radius);padding:12px;display:flex;flex-direction:column;gap:7px;background:var(--panel)}
-.agent .top{display:flex;gap:8px;align-items:center}
-.agent .name{font-weight:650;font-family:var(--mono);font-size:13px}
-.agent .task{color:var(--ink)}
-.meta{color:var(--muted);font-size:12.5px}
+[hidden]{display:none!important}
+html{background:var(--bg)}
+body{margin:0;color:var(--ink);font:14px/1.5 system-ui,-apple-system,Segoe UI,Roboto,sans-serif;min-height:100vh;
+background:radial-gradient(1200px 600px at 70% -10%,rgba(15,181,217,.16),transparent 60%),
+radial-gradient(900px 500px at -10% 110%,rgba(56,225,255,.08),transparent 60%),
+linear-gradient(rgba(56,225,255,.035) 1px,transparent 1px) 0 0/40px 40px,
+linear-gradient(90deg,rgba(56,225,255,.035) 1px,transparent 1px) 0 0/40px 40px,var(--bg)}
+button,input,textarea,select{font:inherit;color:inherit}
+select option{background:#0b1620}
+.label{font-family:var(--mono);font-size:11px;letter-spacing:.16em;text-transform:uppercase;color:var(--muted)}
 .mono{font-family:var(--mono);font-size:12.5px}
-.alert{border-left:3px solid var(--bad);background:var(--soft);padding:6px 9px;border-radius:0 6px 6px 0;font-size:13px}
-.alert.warn{border-color:var(--warn)}.alert.ok{border-color:var(--ok)}
-.actions{display:flex;gap:6px;flex-wrap:wrap;margin-top:2px}
-.list > div{padding:8px 0;border-top:1px solid var(--line)}
-.list > div:first-child{border-top:0;padding-top:0}
-.feed{max-height:460px;overflow:auto;font-size:13px}
-.feed div{padding:3px 0;display:grid;grid-template-columns:62px 70px 1fr;gap:6px}
-.feed .t{color:var(--muted);font-family:var(--mono);font-size:12px}
-.feed .k{color:var(--cyan);font-family:var(--mono);font-size:12px}
-.chat{max-height:300px;overflow:auto;font-size:13px}
-.chat div{padding:4px 0;border-top:1px solid var(--line)}
-.empty{color:var(--muted);font-style:italic}
-.tabs2{display:flex;gap:14px;margin-bottom:10px;border-bottom:1px solid var(--line)}
-.tabs2 button{border:0;background:none;color:var(--muted);font:inherit;padding:6px 0;cursor:pointer;border-bottom:2px solid transparent}
-.tabs2 button.on{color:var(--ink);border-color:var(--accent)}
-.needs{display:flex;flex-direction:column;gap:8px}
-.cmd{border:1px solid var(--line);border-radius:var(--radius);margin-bottom:8px;background:var(--panel)}
-.cmd summary{cursor:pointer;padding:9px 12px;display:flex;gap:10px;align-items:baseline;list-style:none}
+.muted{color:var(--muted)}.dim{color:var(--dim)}
+.spacer{flex:1}
+
+header{position:sticky;top:0;z-index:10;display:flex;align-items:center;gap:14px;padding:12px 20px;
+background:rgba(5,8,13,.82);backdrop-filter:blur(10px);border-bottom:1px solid var(--line)}
+.reactor{width:42px;height:42px;flex:none;color:var(--cyan);filter:drop-shadow(0 0 6px currentColor);transition:color .4s}
+.reactor .spin{transform-origin:50% 50%;animation:spin 14s linear infinite}
+.reactor .spin2{transform-origin:50% 50%;animation:spin 9s linear infinite reverse}
+.reactor .core{animation:pulse 2.6s ease-in-out infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+@keyframes pulse{0%,100%{opacity:.7}50%{opacity:1}}
+.brand b{display:block;font-family:var(--mono);letter-spacing:.32em;font-size:15px;color:var(--cyan);text-shadow:var(--glow)}
+.brand span{font-family:var(--mono);font-size:12px;color:var(--muted)}
+.switch{display:flex;align-items:center;gap:8px;cursor:pointer;border:1px solid var(--line);border-radius:99px;padding:4px 12px 4px 6px;background:var(--panel)}
+.switch i{width:30px;height:16px;border-radius:99px;background:#1b2b38;position:relative;transition:.2s}
+.switch i::after{content:"";position:absolute;top:2px;left:2px;width:12px;height:12px;border-radius:50%;background:var(--dim);transition:.2s}
+.switch.on i{background:rgba(76,242,160,.25)}
+.switch.on i::after{left:16px;background:var(--ok);box-shadow:0 0 8px var(--ok)}
+nav{display:flex;gap:4px}
+nav button{background:none;border:1px solid transparent;border-radius:8px;padding:6px 12px;cursor:pointer;color:var(--muted);
+font-family:var(--mono);font-size:12px;letter-spacing:.12em;text-transform:uppercase}
+nav button:hover{color:var(--ink)}
+nav button.on{color:var(--cyan);border-color:var(--line2);background:rgba(56,225,255,.06);text-shadow:var(--glow)}
+main{max-width:1380px;margin:0 auto;padding:22px 20px 40px}
+
+.panel{position:relative;background:var(--panel);border:1px solid var(--line);border-radius:var(--r);padding:16px 18px;margin-bottom:18px}
+.panel::before,.panel::after{content:"";position:absolute;width:14px;height:14px;border:2px solid var(--cyan);opacity:.55;pointer-events:none}
+.panel::before{top:-1px;left:-1px;border-right:0;border-bottom:0;border-top-left-radius:var(--r)}
+.panel::after{bottom:-1px;right:-1px;border-left:0;border-top:0;border-bottom-right-radius:var(--r)}
+.panel > .head{display:flex;align-items:center;gap:10px;margin-bottom:12px;flex-wrap:wrap}
+.count{font-family:var(--mono);font-size:11px;color:var(--cyan);border:1px solid var(--line2);border-radius:99px;padding:0 8px}
+
+.command{display:flex;flex-direction:column;gap:10px;padding:18px 20px}
+.command .ask{display:flex;align-items:center;gap:12px;border:1px solid var(--line2);border-radius:12px;padding:6px 6px 6px 16px;
+background:rgba(3,10,16,.7);box-shadow:inset 0 0 24px rgba(56,225,255,.06)}
+.command .ask:focus-within{border-color:var(--cyan);box-shadow:var(--glow),inset 0 0 24px rgba(56,225,255,.08)}
+.command .prompt{font-family:var(--mono);color:var(--cyan);text-shadow:var(--glow)}
+.command textarea{flex:1;min-width:0;background:none;border:0;outline:0;resize:none;font-size:16px;padding:8px 0;min-height:24px;max-height:180px}
+.command textarea::placeholder,.command input::placeholder{color:var(--dim)}
+.modes{display:flex;gap:6px;align-items:center;flex-wrap:wrap}
+.chip{border:1px solid var(--line);background:none;border-radius:99px;padding:3px 12px;cursor:pointer;color:var(--muted);font-size:12.5px}
+.chip.on{border-color:var(--cyan);color:var(--cyan);background:rgba(56,225,255,.07)}
+.opts{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.opts input[type=text],.opts input[type=number]{background:rgba(3,10,16,.6);border:1px solid var(--line);border-radius:8px;padding:5px 9px;outline:0}
+.opts input:focus{border-color:var(--cyan2)}
+
+.btn{border:1px solid var(--line2);background:rgba(56,225,255,.04);border-radius:8px;padding:6px 13px;cursor:pointer;white-space:nowrap;color:var(--ink);transition:.15s}
+.btn:hover{border-color:var(--cyan);color:var(--cyan);box-shadow:0 0 12px rgba(56,225,255,.18)}
+.btn.go{background:linear-gradient(180deg,#2ad4f5,#0e9fc4);border-color:#5ae8ff;color:#021018;font-weight:650;box-shadow:0 0 16px rgba(56,225,255,.35)}
+.btn.go:hover{color:#021018;filter:brightness(1.1)}
+.btn.ok{border-color:rgba(76,242,160,.6);color:var(--ok)}
+.btn.bad{border-color:rgba(255,95,109,.45);color:var(--bad)}
+.btn.bad:hover{box-shadow:0 0 12px rgba(255,95,109,.25)}
+.btn.ghost{border-color:transparent;background:none;color:var(--muted)}
+.btn.ghost:hover{color:var(--ink);box-shadow:none}
+.btn.sm{padding:3px 10px;font-size:12.5px}
+
+.stats{display:grid;grid-template-columns:repeat(5,1fr);gap:12px;margin-bottom:18px}
+@media (max-width:760px){.stats{grid-template-columns:repeat(3,1fr)}}
+.stat{position:relative;background:var(--panel);border:1px solid var(--line);border-radius:var(--r);padding:12px 14px;overflow:hidden}
+.stat b{display:block;font-family:var(--mono);font-size:28px;font-weight:500;line-height:1.1;text-shadow:0 0 14px currentColor}
+.stat::after{content:"";position:absolute;left:0;bottom:0;height:2px;width:100%;background:currentColor;opacity:.6}
+.stat.cyan{color:var(--cyan)}.stat.ok{color:var(--ok)}.stat.warn{color:var(--warn)}.stat.bad{color:var(--bad)}.stat.violet{color:var(--violet)}
+.stat .label{color:var(--muted)}
+.stat.zero{color:var(--dim)}.stat.zero b{text-shadow:none}
+
+.grid{display:grid;grid-template-columns:minmax(0,1fr) 400px;gap:18px}
+@media (max-width:1040px){.grid{grid-template-columns:minmax(0,1fr)}}
+.panel,.agent,.need,.msg{overflow-wrap:anywhere}
+
+.need{display:flex;gap:12px;align-items:flex-start;padding:12px;border-radius:10px;border:1px solid rgba(255,197,82,.35);
+background:linear-gradient(90deg,rgba(255,197,82,.08),transparent);margin-bottom:10px}
+.need.red{border-color:rgba(255,95,109,.4);background:linear-gradient(90deg,rgba(255,95,109,.09),transparent)}
+.need .icon{font-family:var(--mono);color:var(--warn);font-size:18px;line-height:1.2}
+.need.red .icon{color:var(--bad)}
+.need .what{flex:1;min-width:0}
+.need .what b{display:block}
+.need .acts{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px}
+.clear{display:flex;align-items:center;gap:10px;color:var(--muted)}
+.clear::before{content:"";width:8px;height:8px;border-radius:50%;background:var(--ok);box-shadow:0 0 10px var(--ok)}
+
+.agents{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(300px,100%),1fr));gap:14px}
+.agent{position:relative;border:1px solid var(--line);border-radius:12px;padding:14px 14px 14px 17px;background:var(--panel2);display:flex;flex-direction:column;gap:8px;overflow:hidden}
+.agent::before{content:"";position:absolute;left:0;top:0;bottom:0;width:3px;background:var(--c,var(--cyan));box-shadow:0 0 12px var(--c,var(--cyan))}
+.agent .top{display:flex;align-items:center;gap:10px}
+.agent .name{font-family:var(--mono);font-size:13px;color:var(--ink);letter-spacing:.03em}
+.state{display:inline-flex;align-items:center;gap:6px;font-size:12px;color:var(--c,var(--cyan));font-weight:600}
+.state::before{content:"";width:7px;height:7px;border-radius:50%;background:currentColor;box-shadow:0 0 8px currentColor}
+.state.live::before{animation:blink 1.4s ease-in-out infinite}
+@keyframes blink{50%{opacity:.25}}
+.agent .task{font-size:14.5px}
+.agent .why{font-size:12.5px;padding:7px 10px;border-radius:8px;background:rgba(255,255,255,.03);border:1px solid var(--line)}
+.agent .why.bad{border-color:rgba(255,95,109,.4);color:#ffc2c7}
+.agent .why.ok{border-color:rgba(76,242,160,.35);color:#c1ffe0}
+.agent .acts{display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-top:2px}
+.agent .more{display:flex;gap:6px;flex-wrap:wrap;padding-top:8px;border-top:1px dashed var(--line)}
+.c-active{--c:var(--cyan)}.c-ready{--c:var(--warn)}.c-landed{--c:var(--ok)}.c-blocked{--c:var(--bad)}.c-exited{--c:var(--violet)}.c-paused,.c-done{--c:var(--dim)}
+
+.rows > div{padding:10px 0;border-top:1px solid var(--line)}
+.rows > div:first-child{border-top:0;padding-top:0}
+.tag{font-family:var(--mono);font-size:11px;letter-spacing:.08em;text-transform:uppercase;border-radius:5px;padding:1px 7px;border:1px solid currentColor}
+.t-conflict,.t-blocked,.t-rejected,.t-failed{color:var(--bad)}.t-semantic{color:var(--violet)}.t-overlap,.t-pending,.t-ready,.t-proposed{color:var(--warn)}
+.t-landed,.t-approved,.t-done{color:var(--ok)}.t-running,.t-active{color:var(--cyan)}.t-cancelled{color:var(--dim)}
+.bar{height:4px;border-radius:99px;background:#13222f;overflow:hidden;margin-top:6px}
+.bar i{display:block;height:100%;background:linear-gradient(90deg,var(--cyan2),var(--ok));box-shadow:0 0 8px var(--cyan)}
+.empty{color:var(--dim);font-size:13px}
+
+.comms{max-height:330px;overflow:auto;display:flex;flex-direction:column;gap:8px;padding-right:4px}
+.msg{padding:8px 10px;border-radius:10px;background:rgba(255,255,255,.025);border:1px solid var(--line);font-size:13px}
+.msg.me{background:rgba(56,225,255,.06);border-color:var(--line2);margin-left:28px}
+.msg.sys{border-style:dashed}
+.msg .who{font-family:var(--mono);font-size:11.5px;color:var(--muted);margin-bottom:2px}
+.send{display:flex;gap:8px;margin-top:10px}
+.send select,.send input{background:rgba(3,10,16,.6);border:1px solid var(--line);border-radius:8px;padding:6px 9px;outline:0;min-width:0}
+.send select{max-width:120px}
+.send input{flex:1}
+.send input:focus,.send select:focus{border-color:var(--cyan2)}
+.log{max-height:420px;overflow:auto;font-family:var(--mono);font-size:12px;line-height:1.55}
+.log div{display:grid;grid-template-columns:62px 64px 1fr;gap:8px;padding:2px 0}
+.log .t{color:var(--dim)}.log .k{color:var(--cyan)}
+::-webkit-scrollbar{width:8px;height:8px}::-webkit-scrollbar-thumb{background:#1a2c3a;border-radius:8px}
+
+.cmd{border:1px solid var(--line);border-radius:10px;margin-bottom:8px;background:var(--panel)}
+.cmd summary{cursor:pointer;padding:10px 14px;display:flex;gap:14px;align-items:baseline;list-style:none}
 .cmd summary::-webkit-details-marker{display:none}
-.cmd summary b{font-family:var(--mono);font-size:13px;min-width:110px}
-.cmd .body{padding:4px 12px 12px;display:grid;gap:8px}
-.field{display:grid;grid-template-columns:150px 1fr;gap:8px;align-items:center}
+.cmd summary b{font-family:var(--mono);color:var(--cyan);min-width:110px;font-weight:500}
+.cmd[open] summary{border-bottom:1px solid var(--line)}
+.cmd .body{padding:12px 14px;display:grid;gap:10px}
+.field{display:grid;grid-template-columns:150px 1fr;gap:10px;align-items:center}
 @media (max-width:640px){.field{grid-template-columns:1fr}}
-.field .lbl{font-family:var(--mono);font-size:12.5px}
-.field input[type=checkbox]{justify-self:start;width:auto}
-.field .help{grid-column:2;color:var(--muted);font-size:12px;margin-top:-4px}
+.field .lbl{font-family:var(--mono);font-size:12.5px;color:var(--muted)}
+.field .help{grid-column:2;color:var(--dim);font-size:12px;margin-top:-6px}
+.field input[type=checkbox]{justify-self:start;accent-color:var(--cyan)}
+.in{background:rgba(3,10,16,.6);border:1px solid var(--line);border-radius:8px;padding:6px 9px;outline:0;width:100%}
+.in:focus{border-color:var(--cyan2)}
+textarea.in{min-height:56px;resize:vertical}
 table{width:100%;border-collapse:collapse}
-td,th{text-align:left;padding:6px 8px;border-top:1px solid var(--line);vertical-align:middle}
-th{color:var(--muted);font-weight:600;font-size:12.5px}
-#drawer{position:fixed;left:0;right:0;bottom:0;z-index:6;background:var(--panel);border-top:1px solid var(--line);
-box-shadow:0 -6px 20px rgba(0,0,0,.08);max-height:45vh;display:none;flex-direction:column}
-#drawer.open{display:flex}
-#drawer .bar{display:flex;gap:8px;align-items:center;padding:8px 16px;border-bottom:1px solid var(--line)}
-#drawer pre{margin:0;padding:10px 16px;overflow:auto;font:12.5px/1.45 var(--mono);white-space:pre-wrap}
-#modal{position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:8;display:none;align-items:center;justify-content:center;padding:20px}
-#modal.open{display:flex}
-#modal .box{background:var(--panel);border-radius:var(--radius);width:min(1100px,100%);max-height:88vh;display:flex;flex-direction:column}
-#modal .bar{display:flex;gap:8px;align-items:center;padding:10px 14px;border-bottom:1px solid var(--line)}
-#modal pre{margin:0;padding:12px 14px;overflow:auto;font:12.5px/1.45 var(--mono)}
-.d-add{color:var(--ok)}.d-del{color:var(--bad)}.d-hunk{color:var(--cyan)}.d-file{font-weight:700}
-.toast{position:fixed;right:16px;top:64px;z-index:9;background:var(--ink);color:var(--bg);padding:8px 12px;border-radius:8px;opacity:0;transition:opacity .2s}
-.toast.show{opacity:.95}
-body.drawer-open main{padding-bottom:46vh}
+td,th{text-align:left;padding:7px 8px;border-top:1px solid var(--line);vertical-align:middle}
+th{font-family:var(--mono);font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);font-weight:500}
+
+#console{position:fixed;left:16px;right:16px;bottom:16px;z-index:20;max-height:42vh;display:none;flex-direction:column;
+background:rgba(3,9,14,.96);border:1px solid var(--line2);border-radius:12px;box-shadow:0 0 40px rgba(0,0,0,.6),var(--glow)}
+#console.open{display:flex}
+#console .top{display:flex;align-items:center;gap:10px;padding:8px 14px;border-bottom:1px solid var(--line)}
+#console pre{margin:0;padding:12px 14px;overflow:auto;font:12.5px/1.5 var(--mono);white-space:pre-wrap;color:#bfefff}
+body.console-open main{padding-bottom:46vh}
+
+#dialog{position:fixed;inset:0;z-index:30;background:rgba(0,4,8,.7);backdrop-filter:blur(3px);display:none;align-items:center;justify-content:center;padding:20px}
+#dialog.open{display:flex}
+#dialog .box{width:min(560px,100%);margin:0}
+#dialog.wide .box{width:min(1100px,100%);max-height:88vh;display:flex;flex-direction:column}
+#dialog pre{margin:0;overflow:auto;font:12.5px/1.5 var(--mono);max-height:68vh}
+.d-add{color:var(--ok)}.d-del{color:var(--bad)}.d-hunk{color:var(--cyan)}.d-file{color:var(--warn);font-weight:700;margin-top:6px}
+.toast{position:fixed;right:20px;top:76px;z-index:40;background:var(--panel2);border:1px solid var(--line2);color:var(--ink);padding:9px 14px;border-radius:10px;
+box-shadow:var(--glow);opacity:0;transform:translateY(-6px);transition:.2s;pointer-events:none}
+.toast.show{opacity:1;transform:none}
+@media (max-width:640px){header{flex-wrap:wrap;padding:10px 14px}nav{width:100%;overflow-x:auto}main{padding:16px 14px 40px}.brand span{display:none}}
+@media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
 </style>
 </head>
 <body>
 <header>
-  <h1>braid</h1>
-  <span class="repo" id="repo">loading</span>
-  <span id="daemon"></span>
+  <svg class="reactor" viewBox="0 0 42 42" aria-hidden="true">
+    <circle cx="21" cy="21" r="19" fill="none" stroke="currentColor" stroke-opacity=".25" stroke-width="1"/>
+    <g class="spin"><circle cx="21" cy="21" r="16" fill="none" stroke="currentColor" stroke-width="2" stroke-dasharray="10 6" stroke-opacity=".8"/></g>
+    <g class="spin2"><circle cx="21" cy="21" r="11" fill="none" stroke="currentColor" stroke-width="1.2" stroke-dasharray="3 4"/></g>
+    <circle class="core" cx="21" cy="21" r="6" fill="currentColor"/>
+  </svg>
+  <div class="brand"><b>BRAID</b><span id="where">connecting</span></div>
   <span class="spacer"></span>
+  <div class="switch" id="watcher" title="The watcher predicts conflicts and lands ready work"><i></i><span class="label" id="watcher-label">watcher</span></div>
   <nav id="nav">
-    <button data-tab="overview" class="on">Overview</button>
+    <button data-tab="home" class="on">Mission</button>
     <button data-tab="commands">Commands</button>
     <button data-tab="settings">Settings</button>
-    <button data-tab="jobs">History</button>
+    <button data-tab="history">History</button>
   </nav>
 </header>
 <main>
-  <section id="tab-overview">
-    <div class="row" style="margin-bottom:14px">
-      <button class="btn" data-run="check">Check conflicts now</button>
-      <button class="btn" data-run="land">Land ready work</button>
-      <button class="btn" data-run="ship">Ship (land + push)</button>
-      <button class="btn" data-run="push">Push</button>
-      <button class="btn" data-run="sync --all">Sync all agents</button>
-      <button class="btn" data-run="prune">Tidy landed agents</button>
+<section id="tab-home">
+  <div class="panel command">
+    <div class="ask"><span class="prompt">&gt;</span>
+      <textarea id="ask" rows="1" placeholder="What should we build? e.g. add login with Google and a settings page"></textarea>
+      <button class="btn go" id="ask-go">Plan it</button></div>
+    <div class="modes">
+      <button class="chip on" data-mode="do">Plan it for me</button>
+      <button class="chip" data-mode="start">One agent per line</button>
       <span class="spacer"></span>
-      <button class="btn danger" data-run="stop --all" data-confirm="Stop every agent and the watcher?">Stop all</button>
+      <button class="btn ghost sm" id="opts-toggle">Options</button>
     </div>
-    <div class="grid">
-      <div>
-        <div class="card" id="needs-card"><h2>Needs you <span class="count" id="needs-count">0</span></h2><div class="needs" id="needs"></div></div>
-        <div class="card">
-          <div class="tabs2" id="newtabs"><button data-new="do" class="on">Plan a goal</button><button data-new="start">Start tasks</button></div>
-          <div id="new-do">
-            <textarea id="goal" placeholder="What should get built? e.g. a notes app: storage module, CLI, tests"></textarea>
-            <div class="row" style="margin-top:8px">
-              <input class="grow" id="do-base" placeholder="land on branch (default: the base branch)">
-              <input id="do-max" type="number" min="1" placeholder="max agents" style="width:120px">
-              <label class="inline"><input type="checkbox" id="do-push"> push when done</label>
-              <button class="btn primary" id="do-go">Plan and start</button>
-            </div>
-          </div>
-          <div id="new-start" hidden>
-            <textarea id="tasks" placeholder="One task per line; each gets its own agent"></textarea>
-            <div class="row" style="margin-top:8px">
-              <input class="grow" id="start-base" placeholder="land on branch (default: the base branch)">
-              <label class="inline"><input type="checkbox" id="start-nolaunch"> make the worktrees, I'll drive</label>
-              <button class="btn primary" id="start-go">Start agents</button>
-            </div>
-          </div>
+    <div class="opts" id="opts" hidden>
+      <input type="text" id="opt-base" placeholder="land on branch (default: base)" style="width:240px">
+      <input type="number" id="opt-max" min="1" placeholder="max agents" style="width:120px">
+      <label class="muted" id="opt-push-label"><input type="checkbox" id="opt-push"> push when everything lands</label>
+    </div>
+  </div>
+
+  <div class="stats" id="stats"></div>
+
+  <div class="grid">
+    <div>
+      <div class="panel"><div class="head"><span class="label">Needs you</span><span class="count" id="needs-count">0</span></div><div id="needs"></div></div>
+      <div class="panel">
+        <div class="head"><span class="label">Agents</span><span class="count" id="agents-count">0</span><span class="spacer"></span>
+          <button class="btn sm" data-run="land" title="Land every agent that is reviewed and ready">Land ready</button>
+          <button class="btn sm" data-run="ship" title="Land ready work, then push">Ship</button>
+          <button class="btn ghost sm" id="more-toggle">More</button></div>
+        <div id="more-bar" style="display:none;gap:6px;flex-wrap:wrap;align-items:center;margin:-4px 0 12px">
+          <button class="btn sm" data-run="check">Check conflicts now</button>
+          <button class="btn sm" data-run="push">Push</button>
+          <button class="btn sm" data-run="sync --all">Sync all</button>
+          <button class="btn sm" data-run="prune">Clear landed</button>
+          <label class="muted" style="font-size:12.5px;display:flex;gap:6px;align-items:center"><input type="checkbox" id="show-landed"> show landed</label>
+          <span class="spacer"></span>
+          <button class="btn bad sm" data-run="stop --all" data-confirm="Stop every agent and the watcher?">Stop everything</button>
         </div>
-        <div class="card"><h2>Agents <span class="count" id="agents-count">0</span>
-          <span class="spacer"></span><label class="inline" style="text-transform:none;letter-spacing:0"><input type="checkbox" id="show-landed"> show landed</label></h2>
-          <div class="agents" id="agents"></div></div>
-        <div class="card"><h2>Predicted conflicts <span class="count" id="risks-count">0</span></h2><div class="list" id="risks"></div></div>
-        <div class="card"><h2>Plans</h2><div class="list" id="plans"></div></div>
-        <div class="card"><h2>Approvals <span id="approvals-mode" class="meta" style="text-transform:none;letter-spacing:0"></span></h2><div class="list" id="approvals"></div></div>
+        <div class="agents" id="agents"></div>
       </div>
-      <div>
-        <div class="card"><h2>Chat with the agents</h2>
-          <div class="chat" id="chat"></div>
-          <div class="row" style="margin-top:8px;flex-wrap:nowrap">
-            <select id="chat-to" style="width:110px"><option value="">everyone</option></select>
-            <input id="chat-text" style="flex:1;min-width:0;width:auto" placeholder="e.g. use the v2 API">
-            <button class="btn" id="chat-go">Send</button>
-          </div>
-        </div>
-        <div class="card"><h2>Activity</h2><div class="feed" id="feed"></div></div>
-        <div class="card"><h2>Your checkout</h2><pre class="mono" id="git" style="margin:0;white-space:pre-wrap"></pre></div>
-      </div>
+      <div class="panel"><div class="head"><span class="label">Conflict radar</span><span class="count" id="risks-count">0</span></div><div class="rows" id="risks"></div></div>
+      <div class="panel"><div class="head"><span class="label">Plans</span></div><div class="rows" id="plans"></div></div>
+      <div class="panel"><div class="head"><span class="label">Approvals</span><span class="muted" id="approvals-mode" style="font-size:12.5px"></span></div><div class="rows" id="approvals"></div></div>
     </div>
-  </section>
-  <section id="tab-commands" hidden>
-    <div class="card">
-      <h2>Run anything</h2>
-      <div class="row"><span class="mono">braid</span><input class="grow mono" id="raw" placeholder="log --oneline -5   (any braid or git command)"><button class="btn primary" id="raw-go">Run</button></div>
-      <p class="meta" style="margin:8px 0 0">Every command below is the real CLI command; its form is built from the CLI itself.</p>
+    <div>
+      <div class="panel"><div class="head"><span class="label">Comms</span></div>
+        <div class="comms" id="chat"></div>
+        <div class="send"><select id="chat-to"><option value="">all agents</option></select>
+          <input id="chat-text" placeholder="Tell the agents something"><button class="btn" id="chat-go">Send</button></div></div>
+      <div class="panel"><div class="head"><span class="label">Activity log</span></div><div class="log" id="feed"></div></div>
+      <div class="panel"><div class="head"><span class="label">Your checkout</span></div><pre class="mono muted" id="git" style="margin:0;white-space:pre-wrap"></pre></div>
     </div>
-    <div id="commands"></div>
-  </section>
-  <section id="tab-settings" hidden>
-    <div class="card"><h2>Settings</h2>
-      <p class="meta" style="margin-top:0">Saving runs <span class="mono">braid settings key value</span>. Tick "every repo" to save it in ~/.config/braid instead.</p>
-      <table><thead><tr><th>key</th><th>value</th><th></th></tr></thead><tbody id="settings"></tbody></table>
-    </div>
-  </section>
-  <section id="tab-jobs" hidden><div class="card"><h2>Commands run from this page</h2><div class="list" id="jobs"></div></div></section>
+  </div>
+</section>
+
+<section id="tab-commands" hidden>
+  <div class="panel command">
+    <div class="ask"><span class="prompt">braid</span><input id="raw" class="mono" style="flex:1;min-width:0;background:none;border:0;outline:0;padding:9px 0;font-size:14px" placeholder="log --oneline -5      any braid or git command">
+      <button class="btn go" id="raw-go">Run</button></div>
+    <div class="muted" style="font-size:12.5px">Every command below is the real CLI command. Its form is built from the CLI itself, so nothing is missing.</div>
+  </div>
+  <div id="commands"></div>
+</section>
+
+<section id="tab-settings" hidden>
+  <div class="panel"><div class="head"><span class="label">Settings</span></div>
+    <p class="muted" style="margin-top:0">Saving runs <span class="mono">braid settings key value</span>. Tick "every repo" to save it for all your projects.</p>
+    <table><thead><tr><th>key</th><th>value</th><th></th></tr></thead><tbody id="settings"></tbody></table></div>
+</section>
+
+<section id="tab-history" hidden><div class="panel"><div class="head"><span class="label">Run from this page</span></div><div class="rows" id="jobs"></div></div></section>
 </main>
-<div id="drawer"><div class="bar"><b class="mono" id="drawer-title"></b><span id="drawer-state" class="pill"></span><span class="spacer"></span>
-  <button class="btn small" id="drawer-stop">Stop</button><button class="btn small" id="drawer-close">Close</button></div><pre id="drawer-out"></pre></div>
-<div id="modal"><div class="box"><div class="bar"><b id="modal-title"></b><span class="spacer"></span><button class="btn small" id="modal-close">Close</button></div><pre id="modal-body"></pre></div></div>
+
+<div id="console"><div class="top"><span class="label">console</span><span class="mono" id="console-title"></span><span id="console-state"></span><span class="spacer"></span>
+  <button class="btn sm" id="console-stop">Stop</button><button class="btn ghost sm" id="console-close">Close</button></div><pre id="console-out"></pre></div>
+<div id="dialog"><div class="box panel" id="dialog-box"></div></div>
 <div class="toast" id="toast"></div>
+
 <script>
 const TOKEN = document.querySelector('meta[name=braid-token]').content;
 const $ = (s) => document.querySelector(s);
-let S = null, showingJob = null, schema = null;
+let S = null, schema = null, showingJob = null, mode = 'do';
+const openMore = new Set();
 
 function h(tag, attrs, ...kids) {
   const el = document.createElement(tag);
@@ -206,11 +298,10 @@ function h(tag, attrs, ...kids) {
   for (const c of kids.flat()) if (c != null && c !== false) el.append(c.nodeType ? c : String(c));
   return el;
 }
-const pill = (text, cls) => h('span', {class: 'pill s-' + (cls || text)}, text);
-const btn = (label, fn, cls) => h('button', {class: 'btn small ' + (cls || ''), onclick: fn}, label);
-const ago = (t) => { const s = Math.max(0, Date.now() / 1000 - t); return s < 60 ? Math.round(s) + 's' : s < 3600 ? Math.round(s / 60) + 'm' : Math.round(s / 3600) + 'h'; };
+const btn = (label, fn, cls, title) => h('button', {class: 'btn sm ' + (cls || ''), onclick: fn, title}, label);
+const tag = (text, cls) => h('span', {class: 'tag t-' + (cls || text)}, text);
 const clock = (t) => new Date(t * 1000).toTimeString().slice(0, 8);
-function toast(msg) { const t = $('#toast'); t.textContent = msg; t.classList.add('show'); setTimeout(() => t.classList.remove('show'), 2200); }
+function toast(msg) { const t = $('#toast'); t.textContent = msg; t.classList.add('show'); clearTimeout(toast.t); toast.t = setTimeout(() => t.classList.remove('show'), 2600); }
 
 async function api(path, body) {
   const r = await fetch(path, body ? {method: 'POST', headers: {'Content-Type': 'application/json', 'X-Braid-Token': TOKEN}, body: JSON.stringify(body)}
@@ -219,8 +310,7 @@ async function api(path, body) {
   if (!r.ok) throw new Error(data.error || ('HTTP ' + r.status));
   return data;
 }
-
-function split(line) {  // shell-like: quotes group words
+function split(line) {
   const out = []; let cur = '', q = null, any = false;
   for (const ch of line) {
     if (q) { if (ch === q) q = null; else cur += ch; }
@@ -232,235 +322,286 @@ function split(line) {  // shell-like: quotes group words
   return out;
 }
 
-async function run(argv, opts = {}) {
-  if (typeof argv === 'string') argv = split(argv);
-  if (opts.confirm && !confirm(opts.confirm)) return;
+// ---------- dialog: a friendlier prompt()/confirm() ----------
+function closeDialog() { $('#dialog').classList.remove('open', 'wide'); }
+function dialog({title, text, placeholder, okLabel, danger, input}) {
+  return new Promise((resolve) => {
+    const field = input ? h('textarea', {class: 'in', placeholder: placeholder || '', rows: 3}) : null;
+    const done = (v) => { closeDialog(); resolve(v); };
+    $('#dialog-box').replaceChildren(
+      h('div', {class: 'head'}, h('span', {class: 'label'}, title)),
+      text ? h('p', {style: 'margin:0 0 12px'}, text) : null, field,
+      h('div', {style: 'display:flex;gap:8px;justify-content:flex-end;margin-top:14px'},
+        btn('Cancel', () => done(null), 'ghost'),
+        btn(okLabel || 'OK', () => done(field ? field.value.trim() : true), danger ? 'bad' : 'go')));
+    $('#dialog').classList.add('open');
+    if (field) { field.focus(); field.onkeydown = (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); done(field.value.trim()); } }; }
+  });
+}
+$('#dialog').onclick = (e) => { if (e.target.id === 'dialog') closeDialog(); };
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeDialog(); });
+
+async function showDiff(kind, ref, title) {
+  const pre = h('pre', {}, 'loading...');
+  $('#dialog-box').replaceChildren(h('div', {class: 'head'}, h('span', {class: 'label'}, 'changes'), h('span', {class: 'mono'}, title),
+    h('span', {class: 'spacer'}), btn('Close', closeDialog, 'ghost')), pre);
+  $('#dialog').classList.add('open', 'wide');
   try {
-    const {job} = await api('/api/run', {argv});
-    openJob(job, argv);
-  } catch (e) { toast(e.message); }
+    const d = await api('/api/diff?kind=' + kind + '&ref=' + encodeURIComponent(ref));
+    pre.textContent = '';
+    for (const line of (d.diff || '(no changes yet)').split('\n')) {
+      const cls = line.startsWith('diff --git') ? 'd-file' : line.startsWith('@@') ? 'd-hunk'
+        : line.startsWith('+') && !line.startsWith('+++') ? 'd-add' : line.startsWith('-') && !line.startsWith('---') ? 'd-del' : '';
+      pre.append(h('div', {class: cls}, line || ' '));
+    }
+    if (d.cut) pre.append(h('div', {class: 'muted'}, '... cut here; run git diff for the rest'));
+  } catch (e) { pre.textContent = e.message; }
 }
 
+// ---------- running commands ----------
+async function run(argv, opts = {}) {
+  if (typeof argv === 'string') argv = split(argv);
+  if (opts.confirm && !(await dialog({title: 'Confirm', text: opts.confirm, okLabel: 'Yes, do it', danger: true}))) return;
+  try { const {job} = await api('/api/run', {argv}); openJob(job, argv); }
+  catch (e) { toast(e.message); }
+}
 function openJob(id, argv) {
   showingJob = id;
-  $('#drawer-title').textContent = 'braid ' + argv.map(a => /\s/.test(a) ? JSON.stringify(a) : a).join(' ');
-  $('#drawer-out').textContent = '';
-  $('#drawer').classList.add('open'); document.body.classList.add('drawer-open');
+  $('#console-title').textContent = 'braid ' + argv.map(a => /\s/.test(a) ? JSON.stringify(a) : a).join(' ');
+  $('#console-out').textContent = '';
+  $('#console').classList.add('open'); document.body.classList.add('console-open');
   pollJob(id);
 }
 async function pollJob(id) {
   if (showingJob !== id) return;
   try {
     const j = await api('/api/jobs/' + id);
-    const out = $('#drawer-out'); const atEnd = out.scrollTop + out.clientHeight >= out.scrollHeight - 20;
-    out.textContent = j.out || (j.rc == null ? 'running...' : '(no output)');
+    const out = $('#console-out'); const atEnd = out.scrollTop + out.clientHeight >= out.scrollHeight - 20;
+    out.textContent = j.out || (j.rc == null ? 'working...' : '(no output)');
     if (atEnd) out.scrollTop = out.scrollHeight;
-    const st = $('#drawer-state');
-    st.textContent = j.rc == null ? 'running' : j.rc === 0 ? 'done' : 'exit ' + j.rc;
-    st.className = 'pill s-' + (j.rc == null ? 'active' : j.rc === 0 ? 'landed' : 'blocked');
-    $('#drawer-stop').hidden = j.rc != null;
+    $('#console-state').replaceChildren(j.rc == null ? tag('running') : j.rc === 0 ? tag('done') : tag('failed'));
+    $('#console-stop').hidden = j.rc != null;
     if (j.rc == null) setTimeout(() => pollJob(id), 700); else refresh();
-  } catch (e) { $('#drawer-out').textContent = e.message; }
+  } catch (e) { $('#console-out').textContent = e.message; }
 }
-$('#drawer-close').onclick = () => { showingJob = null; $('#drawer').classList.remove('open'); document.body.classList.remove('drawer-open'); };
-$('#drawer-stop').onclick = () => showingJob && api('/api/jobs/' + showingJob + '/stop', {});
+$('#console-close').onclick = () => { showingJob = null; $('#console').classList.remove('open'); document.body.classList.remove('console-open'); };
+$('#console-stop').onclick = () => showingJob && api('/api/jobs/' + showingJob + '/stop', {});
 
-async function showDiff(kind, ref, title) {
-  $('#modal-title').textContent = title; const body = $('#modal-body'); body.textContent = 'loading...';
-  $('#modal').classList.add('open');
-  try {
-    const d = await api('/api/diff?kind=' + kind + '&ref=' + encodeURIComponent(ref));
-    body.textContent = '';
-    for (const line of (d.diff || '(no changes yet)').split('\n')) {
-      const cls = line.startsWith('diff --git') ? 'd-file' : line.startsWith('@@') ? 'd-hunk'
-        : line.startsWith('+') && !line.startsWith('+++') ? 'd-add' : line.startsWith('-') && !line.startsWith('---') ? 'd-del' : '';
-      body.append(h('div', {class: cls}, line || ' '));
-    }
-    if (d.cut) body.append(h('div', {class: 'meta'}, '... cut; run git diff for the rest'));
-  } catch (e) { body.textContent = e.message; }
-}
-$('#modal-close').onclick = () => $('#modal').classList.remove('open');
-$('#modal').onclick = (e) => { if (e.target.id === 'modal') $('#modal').classList.remove('open'); };
-document.addEventListener('keydown', (e) => { if (e.key === 'Escape') $('#modal').classList.remove('open'); });
+const ask = (title, text, placeholder) => dialog({title, text, placeholder, input: true, okLabel: 'Send'});
+const resume = async (a) => { const m = await ask('Resume ' + a.name, 'What should it do next? Leave it empty to let it carry on where it stopped.'); if (m != null) run(['resume', a.name, ...(m ? [m] : [])]); };
 
-function ask(question, fallback) { const v = prompt(question, fallback || ''); return v == null ? null : v; }
+// ---------- the mission view ----------
+const tidy = (t) => (t || '').replace(/^landing it was blocked: (blocked: )?/, 'Landing failed: ');
+const WORDS = {active: 'Working', ready: 'Ready to land', landed: 'Landed', blocked: 'Blocked', exited: 'Stopped early', paused: 'Paused', done: 'Done'};
 
-// ---------- overview ----------
 function agentCard(a) {
-  const acts = [btn('Diff', () => showDiff('agent', a.name, a.name + ' vs ' + a.base))];
-  if (a.status === 'ready') {
-    acts.push(btn('Approve', () => run(['review', a.name, '--approve'])));
-    acts.push(btn('Ask for changes', () => { const m = ask('What should ' + a.name + ' change?'); if (m) run(['review', a.name, '--changes', '-m', m]); }));
-    acts.push(btn('Land', () => run(['land', a.name]), 'primary'));
-  }
-  if (a.status === 'active' && a.interactive) acts.push(btn('Mark ready', () => { const m = ask('One-line summary of the work'); if (m != null) run(['ready', a.name, ...(m ? [m] : [])]); }));
+  const main = [], more = [btn('See changes', () => showDiff('agent', a.name, a.name + ' vs ' + a.base))];
+  let why = null;
+  const asked = S.approvals.find(x => x.status === 'pending' && x.agent === a.name);
+  if (asked) {
+    main.push(btn('Land it', () => run(['approve', String(asked.id)]), 'go'));
+    main.push(btn('See changes', () => showDiff('approval', String(asked.id), '#' + asked.id + ' ' + asked.title)));
+    why = h('div', {class: 'why'}, 'Reviewed and tested. Waiting for your yes (approval #' + asked.id + ').');
+  } else if (a.status === 'ready') {
+    if (a.gate && !a.gate.ok) {
+      main.push(btn('Approve', () => run(['review', a.name, '--approve']), 'ok', 'Review it yourself and approve'));
+      why = h('div', {class: 'why'}, a.gate.why);
+    } else {
+      main.push(btn('Land now', () => run(['land', a.name]), 'go'));
+      why = h('div', {class: 'why ok'}, 'Reviewed. The watcher lands it on its next pass, or land it now.');
+    }
+    main.push(btn('Ask for changes', async () => { const m = await ask('Changes for ' + a.name, 'What should it change?'); if (m) run(['review', a.name, '--changes', '-m', m]); }));
+  } else if (a.needs) {
+    main.push(btn('Resume', () => resume(a), 'go'));
+    why = h('div', {class: 'why bad'}, tidy(a.needs));
+  } else if (a.status === 'active') {
+    if (a.running) main.push(btn('Message', async () => { const m = await ask('Message ' + a.name, 'It reads this on its next step.'); if (m) run(['chat', '--post', m, '--to', a.name]); }));
+    else if (a.interactive) {
+      main.push(btn('Mark ready', async () => { const m = await ask('Mark ' + a.name + ' ready', 'A one-line summary of the work (optional).'); if (m != null) run(['ready', a.name, ...(m ? [m] : [])]); }));
+      why = h('div', {class: 'why', title: a.worktree}, 'You drive this one, in its own folder: ' + a.worktree.split('/').slice(-2).join('/'));
+    }
+  } else if (a.status === 'paused' || a.status === 'exited') main.push(btn('Resume', () => resume(a), 'go'));
   if (!['landed', 'done'].includes(a.status)) {
-    acts.push(btn('Sync', () => run(['sync', a.name])));
-    acts.push(btn(a.running ? 'Nudge' : 'Resume', () => {
-      if (a.running) { const m = ask('Message for ' + a.name); if (m) run(['chat', '--post', m, '--to', a.name]); return; }
-      const m = ask('What should ' + a.name + ' do next? (optional)'); if (m != null) run(['resume', a.name, ...(m ? [m] : [])]);
-    }));
-    if (a.running) acts.push(btn('Stop', () => run(['stop', a.name])));
-    acts.push(btn('Drop', () => run(['drop', a.name, '--delete'], {confirm: 'Abandon ' + a.name + ' and delete its branch and worktree?'}), 'danger'));
+    more.push(btn('Sync with ' + a.base, () => run(['sync', a.name])));
+    if (!main.length || a.status === 'active') more.push(btn('Resume', () => resume(a)));
+    if (a.running) more.push(btn('Stop', () => run(['stop', a.name])));
+    more.push(btn('Drop', () => run(['drop', a.name, '--delete'], {confirm: 'Abandon ' + a.name + '? Its branch and folder are deleted.'}), 'bad'));
   }
-  return h('div', {class: 'agent'},
-    h('div', {class: 'top'}, h('span', {class: 'name'}, a.name), pill(a.status),
-      a.interactive ? h('span', {class: 'meta'}, 'you drive') : pill(a.running ? 'running' : 'stopped'),
-      h('span', {class: 'spacer'}), a.ahead != null ? h('span', {class: 'meta'}, a.ahead + ' commit' + (a.ahead === 1 ? '' : 's')) : null),
+  const open = openMore.has(a.name);
+  const toggle = btn(open ? 'Less' : 'More', () => { open ? openMore.delete(a.name) : openMore.add(a.name); render(); }, 'ghost');
+  const doing = a.intents.length ? a.intents[a.intents.length - 1] : null;
+  return h('div', {class: 'agent c-' + a.status},
+    h('div', {class: 'top'}, h('span', {class: 'name'}, a.name), h('span', {class: 'spacer'}),
+      h('span', {class: 'state' + (a.running ? ' live' : '')}, asked ? 'Waiting for you' : WORDS[a.status] || a.status)),
     h('div', {class: 'task'}, a.task),
-    h('div', {class: 'meta mono'}, a.branch + ' → ' + a.base),
-    a.intents.length ? h('div', {class: 'meta'}, 'doing: ' + a.intents[a.intents.length - 1]) : null,
-    a.owns.length ? h('div', {class: 'meta mono'}, 'owns: ' + a.owns.map(l => l.path + (l.kind === 'hard' ? ' (hard)' : '')).join(', ')) : null,
-    a.gate ? h('div', {class: 'alert ' + (a.gate.ok ? 'ok' : 'warn')}, a.gate.ok ? 'can land' : a.gate.why) : null,
-    a.needs ? h('div', {class: 'alert'}, 'needs you: ' + a.needs) : null,
-    h('div', {class: 'actions'}, acts));
+    h('div', {class: 'muted', style: 'font-size:12.5px'},
+      (a.ahead != null ? a.ahead + ' commit' + (a.ahead === 1 ? '' : 's') + ' · ' : '') + 'lands on ' + a.base +
+      (a.owns.length ? ' · owns ' + a.owns.map(l => l.path).join(', ') : '')),
+    doing ? h('div', {class: 'muted', style: 'font-size:12.5px'}, h('span', {class: 'dim'}, 'now: '), doing) : null,
+    why,
+    h('div', {class: 'acts'}, main, h('span', {class: 'spacer'}), toggle),
+    open ? h('div', {class: 'more'}, more) : null);
 }
+
+function stat(n, label, cls) { return h('div', {class: 'stat ' + (n ? cls : 'zero')}, h('b', {}, n), h('span', {class: 'label'}, label)); }
 
 function render() {
-  $('#repo').textContent = S.name + '  →  ' + S.base;
-  $('#daemon').replaceChildren(pill(S.daemon ? 'watcher running' : 'watcher stopped', S.daemon ? 'running' : 'stopped'), ' ',
-    btn(S.daemon ? 'Stop watcher' : 'Start watcher', () => run(['daemon', S.daemon ? 'stop' : 'start'])));
+  $('#where').textContent = S.name + '  →  ' + S.base;
+  $('#watcher').classList.toggle('on', !!S.daemon);
+  $('#watcher-label').textContent = S.daemon ? 'watcher on' : 'watcher off';
 
+  const live = S.agents.filter(a => !['landed', 'done'].includes(a.status));
   const pending = S.approvals.filter(a => a.status === 'pending');
   const stuck = S.agents.filter(a => a.needs);
+  const count = (st) => S.agents.filter(a => a.status === st).length;
+  $('#stats').replaceChildren(
+    stat(count('active'), 'working', 'cyan'), stat(count('ready'), 'ready', 'warn'),
+    stat(stuck.length, 'stuck', 'bad'), stat(S.risks.filter(r => r.severity !== 'overlap').length, 'conflicts', 'violet'),
+    stat(count('landed'), 'landed', 'ok'));
+  document.querySelector('.reactor').style.color = stuck.length ? 'var(--bad)' : (pending.length || S.decisions.length) ? 'var(--warn)' : 'var(--cyan)';
+
   const needs = [];
-  for (const a of pending) needs.push(h('div', {class: 'alert warn'}, h('b', {}, 'Approve #' + a.id + ': '), a.title, ' ',
-    h('span', {class: 'actions', style: 'display:inline-flex;margin-left:6px'},
-      btn('Review diff', () => showDiff('approval', String(a.id), '#' + a.id + ' ' + a.title)),
-      btn('Land it', () => run(['approve', String(a.id)]), 'primary'),
-      btn('Send back', () => { const m = ask('Why? (goes to the agent)'); if (m != null) run(['reject', String(a.id), ...(m ? ['-m', m] : [])]); }))));
-  for (const d of S.decisions) needs.push(h('div', {class: 'alert warn'}, h('b', {}, 'Decision #' + d.id + ': '),
-    d.agent + ' vs ' + [].concat(d.parties || []).join(', ') + ' in ' + [].concat(d.files || []).join(', ') + '. ' + d.detail, ' ',
-    h('span', {class: 'actions', style: 'display:inline-flex;margin-left:6px'},
-      btn('Accept', () => run(['vote', String(d.id), 'accept'])),
-      btn('Object', () => { const m = ask('Why object?'); if (m != null) run(['vote', String(d.id), 'object', ...(m ? [m] : [])]); }, 'danger'))));
-  for (const a of stuck) needs.push(h('div', {class: 'alert'}, h('b', {}, a.name + ': '), a.needs, ' ',
-    h('span', {class: 'actions', style: 'display:inline-flex;margin-left:6px'},
-      btn('Resume', () => { const m = ask('What should ' + a.name + ' do? (optional)'); if (m != null) run(['resume', a.name, ...(m ? [m] : [])]); }))));
-  $('#needs').replaceChildren(...(needs.length ? needs : [h('div', {class: 'empty'}, 'Nothing is waiting on you.')]));
+  const need = (icon, title, detail, acts, red) => needs.push(h('div', {class: 'need' + (red ? ' red' : '')},
+    h('span', {class: 'icon'}, icon), h('div', {class: 'what'}, h('b', {}, title), detail ? h('div', {class: 'muted'}, detail) : null, h('div', {class: 'acts'}, acts))));
+  for (const a of pending) need('◆', 'Land "' + a.title + '"?', a.agent + ' · +' + a.added + ' / -' + a.removed + ' · ' + (a.tests ? 'tests pass' : 'tests FAILED') + (a.risk ? ' · risk ' + a.risk : ''), [
+    btn('Land it', () => run(['approve', String(a.id)]), 'go'),
+    btn('See changes', () => showDiff('approval', String(a.id), '#' + a.id + ' ' + a.title)),
+    btn('Send back', async () => { const m = await ask('Send back #' + a.id, 'Why? The agent gets this and fixes it.'); if (m != null) run(['reject', String(a.id), ...(m ? ['-m', m] : [])]); }, 'bad')]);
+  for (const d of S.decisions) need('✦', 'Accept an automatic conflict fix?', d.agent + ' vs ' + [].concat(d.parties || []).join(', ') + ' in ' + [].concat(d.files || []).join(', ') + '. ' + d.detail, [
+    btn('Accept', () => run(['vote', String(d.id), 'accept']), 'ok'),
+    btn('Object', async () => { const m = await ask('Object to #' + d.id, 'Why? This stops the landing.'); if (m != null) run(['vote', String(d.id), 'object', ...(m ? [m] : [])]); }, 'bad')]);
+  for (const a of stuck) need('▲', a.name + ' is stuck', tidy(a.needs), [btn('Resume', () => resume(a), 'go'), btn('See changes', () => showDiff('agent', a.name, a.name))], true);
+  $('#needs').replaceChildren(...(needs.length ? needs : [h('div', {class: 'clear'}, 'All clear. Nothing is waiting on you.')]));
   $('#needs-count').textContent = needs.length;
 
-  const showLanded = $('#show-landed').checked;
-  const agents = S.agents.filter(a => showLanded || !['landed', 'done'].includes(a.status));
-  $('#agents').replaceChildren(...(agents.length ? agents.map(agentCard) : [h('div', {class: 'empty'}, S.agents.length ? 'All agents have landed.' : 'No agents yet. Plan a goal or start tasks above.')]));
+  const agents = $('#show-landed').checked ? S.agents : live;
+  $('#agents').replaceChildren(...(agents.length ? agents.map(agentCard)
+    : [h('div', {class: 'empty'}, S.agents.length ? 'Every agent has landed. Describe the next job above.' : 'No agents yet. Describe what to build above and press Plan it.')]));
   $('#agents-count').textContent = agents.length;
 
-  $('#risks').replaceChildren(...(S.risks.length ? S.risks.map(r => h('div', {},
-    pill(r.severity, {conflict: 'blocked', semantic: 'exited'}[r.severity] || 'ready'), ' ',
-    h('b', {class: 'mono'}, r.a + ' ↔ ' + r.b), ' ', h('span', {class: 'meta mono'}, [].concat(r.files || []).join(', ')))) : [h('div', {class: 'empty'}, 'No conflicts predicted.')]));
+  $('#risks').replaceChildren(...(S.risks.length ? S.risks.map(r => h('div', {style: 'display:flex;gap:10px;align-items:center;flex-wrap:wrap'},
+    tag(r.severity), h('b', {class: 'mono'}, r.a + '  ↔  ' + r.b), h('span', {class: 'muted mono'}, [].concat(r.files || []).join(', ')),
+    h('span', {class: 'spacer'}), r.severity === 'conflict' ? h('span', {class: 'dim', style: 'font-size:12px'}, 'both agents have been told') : null))
+    : [h('div', {class: 'empty'}, 'Radar clear. No two agents are about to collide.')]));
   $('#risks-count').textContent = S.risks.length;
 
   $('#plans').replaceChildren(...(S.plans.length ? S.plans.slice().reverse().map(p => {
-    const done = p.tasks.filter(t => t.status === 'landed').length;
+    const done = p.tasks.filter(t => t.status === 'landed').length, pct = p.tasks.length ? Math.round(100 * done / p.tasks.length) : 0;
     return h('div', {},
-      h('div', {class: 'row'}, h('b', {}, '#' + p.id + ' ' + p.goal), pill(p.status, {running: 'active', done: 'landed', cancelled: 'paused', proposed: 'ready'}[p.status]),
-        h('span', {class: 'meta'}, done + '/' + p.tasks.length + ' landed on ' + p.base), h('span', {class: 'spacer'}),
-        p.status === 'proposed' ? btn('Start', () => run(['plans', 'start', String(p.id)])) : null,
-        ['running', 'proposed'].includes(p.status) ? btn('Cancel', () => run(['plans', 'cancel', String(p.id)], {confirm: 'Cancel plan #' + p.id + '?'}), 'danger') : null),
-      h('div', {class: 'meta'}, p.tasks.map(t => t.title + ' (' + t.status + ')').join(' · ')));
+      h('div', {style: 'display:flex;gap:10px;align-items:center;flex-wrap:wrap'}, tag(p.status), h('b', {}, p.goal), h('span', {class: 'spacer'}),
+        h('span', {class: 'muted mono'}, done + '/' + p.tasks.length + ' → ' + p.base),
+        p.status === 'proposed' ? btn('Start', () => run(['plans', 'start', String(p.id)]), 'go') : null,
+        ['running', 'proposed'].includes(p.status) ? btn('Cancel', () => run(['plans', 'cancel', String(p.id)], {confirm: 'Cancel plan #' + p.id + '?'}), 'bad') : null),
+      h('div', {class: 'bar'}, h('i', {style: 'width:' + pct + '%'})),
+      h('div', {class: 'muted', style: 'font-size:12.5px;margin-top:6px'}, p.tasks.map(t => t.title + ' (' + t.status + ')').join('  ·  ')));
   }) : [h('div', {class: 'empty'}, 'No plans yet.')]));
 
-  $('#approvals-mode').textContent = S.approvals_on ? '(on: ' + (S.settings['approve.mode'] || 'each') + ')' : '(off)';
+  $('#approvals-mode').textContent = S.approvals_on ? 'on, ' + ((S.settings['approve.mode'] || 'each') === 'run' ? 'one request per run' : 'one request per landing') : 'off';
   $('#approvals').replaceChildren(...(S.approvals.length ? S.approvals.slice().reverse().map(a => h('div', {},
-    h('div', {class: 'row'}, h('b', {}, '#' + a.id), pill(a.status), h('span', {}, a.title), h('span', {class: 'spacer'}),
-      h('span', {class: 'meta'}, '+' + a.added + ' / -' + a.removed + (a.tests ? ', tests ok' : ', tests failed') + (a.risk ? ', risk ' + a.risk : '')),
-      btn('Diff', () => showDiff('approval', String(a.id), '#' + a.id + ' ' + a.title)),
-      btn('Details', () => run(['approvals', 'show', String(a.id)]))),
-    a.summary ? h('div', {class: 'meta'}, a.summary) : null)) : [h('div', {class: 'empty'}, S.approvals_on ? 'Nothing asked yet.' : 'Approvals are off. Turn on approve.required in Settings to say yes before anything lands.')]));
+    h('div', {style: 'display:flex;gap:10px;align-items:center;flex-wrap:wrap'}, tag(a.status), h('span', {}, a.title), h('span', {class: 'spacer'}),
+      h('span', {class: 'muted mono'}, '+' + a.added + ' / -' + a.removed), btn('Changes', () => showDiff('approval', String(a.id), '#' + a.id + ' ' + a.title)),
+      btn('Details', () => run(['approvals', 'show', String(a.id)]), 'ghost')),
+    a.summary ? h('div', {class: 'muted', style: 'font-size:12.5px;margin-top:4px'}, a.summary) : null))
+    : [h('div', {class: 'empty'}, S.approvals_on ? 'Nothing asked yet.' : 'Off: work lands without asking you. Turn on approve.required in Settings.')]));
 
   const chat = $('#chat'); const atEnd = chat.scrollTop + chat.clientHeight >= chat.scrollHeight - 20;
-  chat.replaceChildren(...(S.notes.length ? S.notes.map(n => h('div', {}, h('span', {class: 'meta mono'}, clock(n.at) + ' '),
-    h('b', {}, n.agent + (n.to_agent ? ' → ' + n.to_agent : '')), h('span', {class: 'meta'}, ' [' + n.topic + '] '), n.text)) : [h('div', {class: 'empty'}, 'No notes yet.')]));
+  chat.replaceChildren(...(S.notes.length ? S.notes.map(n => h('div', {class: 'msg' + (n.agent === 'human' ? ' me' : n.agent === 'braid' ? ' sys' : '')},
+    h('div', {class: 'who'}, (n.agent === 'human' ? 'you' : n.agent) + (n.to_agent ? ' → ' + n.to_agent : '') + '  ·  ' + n.topic + '  ·  ' + clock(n.at)), n.text))
+    : [h('div', {class: 'empty'}, 'No messages yet.')]));
   if (atEnd) chat.scrollTop = chat.scrollHeight;
   const to = $('#chat-to'), keep = to.value;
-  to.replaceChildren(h('option', {value: ''}, 'everyone'), ...S.agents.filter(a => !['landed', 'done'].includes(a.status)).map(a => h('option', {value: a.name}, a.name)));
+  to.replaceChildren(h('option', {value: ''}, 'all agents'), ...live.map(a => h('option', {value: a.name}, a.name)));
   to.value = keep;
 
   $('#feed').replaceChildren(...(S.events.length ? S.events.slice().reverse().map(e => h('div', {},
-    h('span', {class: 't'}, clock(e.at)), h('span', {class: 'k'}, e.kind), h('span', {}, e.agent ? h('b', {}, e.agent + ' ') : null, e.text))) : [h('div', {class: 'empty'}, 'Nothing has happened yet.')]));
+    h('span', {class: 't'}, clock(e.at)), h('span', {class: 'k'}, e.kind), h('span', {}, e.agent ? h('b', {}, e.agent + ' ') : null, e.text)))
+    : [h('div', {class: 'empty'}, 'Quiet so far.')]));
   $('#git').textContent = S.git;
   renderSettings();
 }
 
 let settingsEditing = false;
 function renderSettings() {
-  if (settingsEditing) return;  // don't wipe what someone is typing
+  if (settingsEditing) return;
   const rows = Object.entries(S.settings).sort(([a], [b]) => a.localeCompare(b)).map(([k, v]) => {
-    const input = h('input', {class: 'mono', value: v == null ? '' : v, onfocus: () => settingsEditing = true, onblur: () => setTimeout(() => settingsEditing = false, 300)});
-    const glob = h('input', {type: 'checkbox'});
+    const input = h('input', {class: 'in mono', value: v == null ? '' : v, onfocus: () => settingsEditing = true, onblur: () => setTimeout(() => settingsEditing = false, 300)});
+    const glob = h('input', {type: 'checkbox', style: 'accent-color:var(--cyan)'});
     return h('tr', {}, h('td', {class: 'mono'}, k), h('td', {}, input),
-      h('td', {}, h('div', {class: 'row', style: 'flex-wrap:nowrap'}, h('label', {class: 'inline'}, glob, 'every repo'),
+      h('td', {}, h('div', {style: 'display:flex;gap:8px;align-items:center;white-space:nowrap'}, h('label', {class: 'muted', style: 'font-size:12.5px'}, glob, ' every repo'),
         btn('Save', () => { settingsEditing = false; run(['settings', ...(glob.checked ? ['--global'] : []), k, input.value]); }))));
   });
-  const nk = h('input', {class: 'mono', placeholder: 'new key'}), nv = h('input', {class: 'mono', placeholder: 'value'});
+  const nk = h('input', {class: 'in mono', placeholder: 'new key'}), nv = h('input', {class: 'in mono', placeholder: 'value'});
   rows.push(h('tr', {}, h('td', {}, nk), h('td', {}, nv), h('td', {}, btn('Add', () => nk.value && run(['settings', nk.value, nv.value])))));
   $('#settings').replaceChildren(...rows);
 }
 
-// ---------- all commands, built from the CLI's own parser ----------
 function renderCommands() {
   $('#commands').replaceChildren(...schema.map(c => {
     const inputs = [];
     const fields = c.args.map(a => {
       let el;
-      if (a.kind === 'flag') el = h('input', {type: 'checkbox', style: 'width:auto'});
-      else if (a.choices) el = h('select', {}, a.required ? null : h('option', {value: ''}, '(none)'), ...a.choices.map(x => h('option', {value: x}, x)));
-      else if (a.kind === 'list') el = h('textarea', {placeholder: 'one per line', style: 'min-height:54px'});
-      else el = h('input', {type: a.int ? 'number' : 'text'});
+      if (a.kind === 'flag') el = h('input', {type: 'checkbox'});
+      else if (a.choices) el = h('select', {class: 'in'}, a.required ? null : h('option', {value: ''}, '(none)'), ...a.choices.map(x => h('option', {value: x}, x)));
+      else if (a.kind === 'list') el = h('textarea', {class: 'in', placeholder: 'one per line'});
+      else el = h('input', {class: 'in', type: a.int ? 'number' : 'text'});
       inputs.push([a, el]);
-      return h('div', {class: 'field'}, h('span', {class: 'lbl'}, (a.flag || a.dest) + (a.required ? ' *' : '')), el,
-        a.help ? h('span', {class: 'help'}, a.help) : null);
+      return h('div', {class: 'field'}, h('span', {class: 'lbl'}, (a.flag || a.dest) + (a.required ? ' *' : '')), el, a.help ? h('span', {class: 'help'}, a.help) : null);
     });
     const go = () => {
       const argv = [c.name];
       for (const [a, el] of inputs) {
         if (a.kind === 'flag') { if (el.checked) argv.push(a.flag); continue; }
         const vals = a.kind === 'list' ? el.value.split('\n').map(s => s.trim()).filter(Boolean) : (el.value.trim() ? [el.value.trim()] : []);
-        if (!vals.length) { if (a.required) { toast(a.dest + ' is required'); return null; } continue; }
+        if (!vals.length) { if (a.required) { toast(a.dest + ' is required'); return; } continue; }
         if (a.flag) for (const v of vals) argv.push(a.flag, v); else argv.push(...vals);
       }
-      if (c.name === 'do' && !argv.includes('--yes')) argv.push('--yes');  // nobody to answer the prompt
+      if (c.name === 'do' && !argv.includes('--yes')) argv.push('--yes');
       run(argv);
     };
-    return h('details', {class: 'cmd'}, h('summary', {}, h('b', {}, c.name), h('span', {class: 'meta'}, c.help || '')),
-      h('div', {class: 'body'}, ...fields, h('div', {}, h('button', {class: 'btn primary', onclick: go}, 'Run braid ' + c.name))));
+    return h('details', {class: 'cmd'}, h('summary', {}, h('b', {}, c.name), h('span', {class: 'muted'}, c.help || '')),
+      h('div', {class: 'body'}, ...fields, h('div', {}, h('button', {class: 'btn go', onclick: go}, 'Run braid ' + c.name))));
   }));
 }
 
 async function renderJobs() {
   const jobs = await api('/api/jobs');
-  $('#jobs').replaceChildren(...(jobs.length ? jobs.slice().reverse().map(j => h('div', {class: 'row'},
-    h('span', {class: 'meta mono'}, clock(j.started)), h('span', {class: 'mono grow'}, 'braid ' + j.argv.join(' ')),
-    pill(j.rc == null ? 'running' : j.rc === 0 ? 'done' : 'exit ' + j.rc, j.rc == null ? 'active' : j.rc === 0 ? 'landed' : 'blocked'),
-    btn('Output', () => openJob(j.id, j.argv)))) : [h('div', {class: 'empty'}, 'Nothing run from here yet.')]));
+  $('#jobs').replaceChildren(...(jobs.length ? jobs.slice().reverse().map(j => h('div', {style: 'display:flex;gap:10px;align-items:center'},
+    h('span', {class: 'dim mono'}, clock(j.started)), h('span', {class: 'mono', style: 'flex:1'}, 'braid ' + j.argv.join(' ')),
+    j.rc == null ? tag('running') : j.rc === 0 ? tag('done') : tag('failed'), btn('Output', () => openJob(j.id, j.argv), 'ghost')))
+    : [h('div', {class: 'empty'}, 'Nothing run from here yet.')]));
 }
 
 // ---------- wiring ----------
 for (const b of document.querySelectorAll('[data-run]')) b.onclick = () => run(b.dataset.run, {confirm: b.dataset.confirm});
 for (const b of document.querySelectorAll('#nav button')) b.onclick = () => {
   for (const x of document.querySelectorAll('#nav button')) x.classList.toggle('on', x === b);
-  for (const t of ['overview', 'commands', 'settings', 'jobs']) $('#tab-' + t).hidden = t !== b.dataset.tab;
-  if (b.dataset.tab === 'jobs') renderJobs();
+  for (const t of ['home', 'commands', 'settings', 'history']) $('#tab-' + t).hidden = t !== b.dataset.tab;
+  if (b.dataset.tab === 'history') renderJobs();
 };
-for (const b of document.querySelectorAll('#newtabs button')) b.onclick = () => {
-  for (const x of document.querySelectorAll('#newtabs button')) x.classList.toggle('on', x === b);
-  $('#new-do').hidden = b.dataset.new !== 'do'; $('#new-start').hidden = b.dataset.new !== 'start';
+for (const b of document.querySelectorAll('[data-mode]')) b.onclick = () => {
+  mode = b.dataset.mode;
+  for (const x of document.querySelectorAll('[data-mode]')) x.classList.toggle('on', x === b);
+  $('#ask-go').textContent = mode === 'do' ? 'Plan it' : 'Start agents';
+  $('#ask').placeholder = mode === 'do' ? 'What should we build? e.g. add login with Google and a settings page' : 'One task per line (Shift+Enter for a new line)';
+  $('#opt-max').hidden = $('#opt-push-label').hidden = mode !== 'do';
 };
-$('#do-go').onclick = () => {
-  const goal = $('#goal').value.trim(); if (!goal) return toast('Say what to build');
-  const argv = ['do', '--yes'];
-  if ($('#do-base').value.trim()) argv.push('--base', $('#do-base').value.trim());
-  if ($('#do-max').value) argv.push('--max-agents', $('#do-max').value);
-  if ($('#do-push').checked) argv.push('--push');
-  run([...argv, goal]); $('#goal').value = '';
+$('#opts-toggle').onclick = () => { $('#opts').hidden = !$('#opts').hidden; };
+$('#more-toggle').onclick = () => { const m = $('#more-bar'); m.style.display = m.style.display === 'none' ? 'flex' : 'none'; };
+const grow = () => { const t = $('#ask'); t.style.height = 'auto'; t.style.height = Math.min(t.scrollHeight, 180) + 'px'; };
+$('#ask').oninput = grow;
+$('#ask').onkeydown = (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); $('#ask-go').click(); } };
+$('#ask-go').onclick = () => {
+  const text = $('#ask').value.trim(); if (!text) return toast(mode === 'do' ? 'Say what to build first' : 'Add at least one task');
+  const base = $('#opt-base').value.trim();
+  if (mode === 'do') {
+    const argv = ['do', '--yes', ...(base ? ['--base', base] : [])];
+    if ($('#opt-max').value) argv.push('--max-agents', $('#opt-max').value);
+    if ($('#opt-push').checked) argv.push('--push');
+    run([...argv, text]);
+  } else run(['start', ...(base ? ['--base', base] : []), ...text.split('\n').map(s => s.trim()).filter(Boolean)]);
+  $('#ask').value = ''; grow();
 };
-$('#start-go').onclick = () => {
-  const tasks = $('#tasks').value.split('\n').map(s => s.trim()).filter(Boolean); if (!tasks.length) return toast('Add at least one task');
-  const argv = ['start'];
-  if ($('#start-base').value.trim()) argv.push('--base', $('#start-base').value.trim());
-  if ($('#start-nolaunch').checked) argv.push('--no-launch');
-  run([...argv, ...tasks]); $('#tasks').value = '';
-};
+$('#watcher').onclick = () => S && run(['daemon', S.daemon ? 'stop' : 'start']);
 $('#chat-go').onclick = () => {
   const text = $('#chat-text').value.trim(); if (!text) return;
   run(['chat', '--post', text, ...($('#chat-to').value ? ['--to', $('#chat-to').value] : [])]); $('#chat-text').value = '';
@@ -472,7 +613,7 @@ $('#show-landed').onchange = () => S && render();
 
 async function refresh() {
   try { S = await api('/api/state'); render(); }
-  catch (e) { $('#repo').textContent = 'cannot read state: ' + e.message; }
+  catch (e) { $('#where').textContent = 'lost contact: ' + e.message; }
 }
 (async () => {
   await refresh();
