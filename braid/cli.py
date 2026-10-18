@@ -840,6 +840,12 @@ def cmd_connect(args):
           "e.g. \"use braid to build a REST API and a web UI for todos\". It calls delegate, then team_status.")
 
 
+def cmd_dashboard(args):
+    from . import dashboard
+    store = open_store()
+    dashboard.run(store.repo, args.port, args.bind, not args.no_open)
+
+
 def cmd_merge_driver(args):
     sys.exit(structmerge.driver_main(args.base, args.ours, args.theirs, args.path))
 
@@ -1005,6 +1011,11 @@ def build_parser():
     s = add("connect", cmd_connect, "give your own Claude Code session braid's tools (delegate, team_status)")
     s.add_argument("--scope", default="local", choices=["local", "project", "user"])
     s.add_argument("--print-only", action="store_true", help="print the command instead of running it")
+
+    s = add("dashboard", cmd_dashboard, "steer every agent from a web page on this machine instead of the CLI")
+    s.add_argument("--port", type=int, default=8770)
+    s.add_argument("--bind", default="127.0.0.1", help="address to listen on (default: this machine only)")
+    s.add_argument("--no-open", action="store_true", help="print the link instead of opening a browser")
 
     approvals_cli.register(add)
 

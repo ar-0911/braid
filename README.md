@@ -95,6 +95,16 @@ WhatsApp note: Twilio only delivers free-form messages within 24 hours of your l
 
 `braid connect` registers braid's MCP server with Claude Code (`--scope local|project|user`). Your own session then has lead-only tools: `delegate` (plan a goal and start agents, like `braid do`), `start_agents`, and `team_status`. So you can say "split this up and get some agents on it" in your normal chat. Agents themselves cannot start more agents. With `--scope user` it works in every repo: the server follows whichever git repo Claude Code is started in, and sets braid up there the first time you delegate. A ready-made `~/.claude/CLAUDE.md` that tells Claude when and how to use braid is in [docs/CLAUDE.md](docs/CLAUDE.md).
 
+### Steer from a web page: `braid dashboard`
+
+```sh
+braid dashboard        # opens http://127.0.0.1:8770 in your browser
+```
+
+One page for everything `braid status`, `feed`, `chat`, `plans` and `approvals` show, refreshed every two seconds, with buttons for what you'd otherwise type: plan a goal or start tasks, see an agent's diff, approve or ask for changes, land, sync, resume, stop or drop an agent, accept or object to a conflict resolution, land or send back a change waiting for your yes, chat with one agent or all of them, start and stop the watcher, and edit settings. A **Needs you** box at the top lists whatever is waiting on you.
+
+The **Commands** tab has a form for every braid command, built from the CLI's own options, so nothing the CLI can do is missing, plus a box to type any braid or git command. Every button runs the real command in your repo and shows its output, so the page and the terminal always agree. The page listens on this machine only (`--bind` to change it), and every request needs the secret key in the link it prints. Closing it stops nothing: agents and the watcher keep running.
+
 ### Everyday commands
 
 | you want to | run |
@@ -104,6 +114,7 @@ WhatsApp note: Twilio only delivers free-form messages within 24 hours of your l
 | plan and run a goal | `braid do "goal"`, then `braid plans`, `braid plans show 1`, `braid plans cancel 1` |
 | use braid from your Claude session | `braid connect` |
 | see everything | `braid status [--live]` (also shows `git status` for where you are) |
+| steer it all from a web page | `braid dashboard [--port 8770] [--no-open]` |
 | just the agents | `braid agents` (in a repo where braid isn't set up yet, `braid status` is plain `git status` plus a note to run `braid init`) |
 | activity / messages | `braid feed -f`, `braid chat`, `braid chat --post "use the v2 API" --to login` |
 | check conflicts now | `braid check` (exit 1 when a conflict is predicted, handy in scripts) |
@@ -219,7 +230,7 @@ Use a different agent CLI: `braid settings agent.command "my-agent --mcp {mcp_co
 python -m unittest discover -s tests -v
 ```
 
-70 tests, including end-to-end runs where `braid start` and `braid do` launch real processes (scripted fake agents) and the watcher reviews, resolves and lands them.
+87 tests, including end-to-end runs where `braid start` and `braid do` launch real processes (scripted fake agents) and the watcher reviews, resolves and lands them.
 
 ## Status and roadmap
 
