@@ -5,6 +5,10 @@ another file. Both branches merge cleanly and the result is broken. Here we diff
 merge base, collect the top-level names (functions, classes, methods, module constants) a side made
 disappear, and look for them in the lines the other side added. Python is parsed with ast; other
 languages use a declaration regex. It's a hint, not a proof, so it is reported as a 'semantic' risk.
+
+With Spelunk installed (see spelunk.py) definitions come from its tree-sitter parsers instead, in every language
+it reads, with their signatures. That adds a second kind of hint: a function whose parameters one side changed
+while the other side's new code calls it.
 """
 import ast
 import re
@@ -54,16 +58,123 @@ def _show(rev, path, cwd):
     return text if rc == 0 else ""
 
 
+DEFINES = {"function", "method", "class", "struct", "enum", "trait", "interface", "type", "module", "constant"}
+
+
+def _spelunk_facts(parser, rev, paths, cwd):
+    """{path: facts} from Spelunk for the files it could parse at rev (files missing at rev are left out)."""
+    files = {}
+    for f in paths:
+        rc, oid = gitutil.git("rev-parse", "--verify", "--quiet", f"{rev}:{f}", cwd=cwd, check=False)
+        if rc == 0 and oid.strip():
+            files[(f, oid.strip())] = _show(rev, f, cwd)
+    return {k[0]: v for k, v in parser.facts(files).items() if v}
+
+
+def _defs(rev, paths, cwd, parser=None):
+    """{path: {name: signature}} for the files at rev; the signature is "" when only braid parsed it."""
+    got = _spelunk_facts(parser, rev, paths, cwd) if parser else {}
+    out = {}
+    for f in paths:
+        facts = got.get(f)
+        if facts is None:
+            out[f] = dict.fromkeys(defined_names(f, _show(rev, f, cwd)), "")
+            continue
+        names = {}
+        for sym in facts.get("symbols", []):
+            n = sym.get("name") or ""
+            if sym.get("kind") not in DEFINES or len(n) < MIN_LEN or (n.startswith("__") and n.endswith("__")):
+                continue
+            if sym.get("parent") and len(n) < 5:  # methods too, but not short generic ones like get or run
+                continue
+            names.setdefault(n, sym.get("signature") or "")
+        out[f] = names
+    return out
+
+
+def arity(signature, name):
+    """(required, total) parameters from a declaration's first line, or None when it can't tell."""
+    at = signature.find(name)
+    start = signature.find("(", at + len(name) if at >= 0 else 0)
+    if start < 0:
+        return None
+    depth, cur, parts = 0, "", []
+    for ch in signature[start + 1:]:
+        if ch in "([{":
+            depth += 1
+        elif ch in ")]}":
+            if depth == 0:
+                parts.append(cur)
+                break
+            depth -= 1
+        elif ch == "," and depth == 0:
+            parts.append(cur)
+            cur = ""
+            continue
+        cur += ch
+    else:
+        return None  # the parameters go on past the first line
+    params = [p.strip() for p in parts if p.strip()]
+    params = [p for p in params if p not in ("self", "cls", "this", "&self", "&mut self", "mut self", "/")]
+    if any(p.startswith(("*", "...")) or "..." in p for p in params):
+        return None  # variadic: any number of arguments may still fit
+    required = sum(1 for p in params if "=" not in p and "?" not in p.split(":")[0])
+    return required, len(params)
+
+
 @lru_cache(maxsize=512)
-def removed_names(mb, commit, cwd):
+def changed_signatures(mb, commit, cwd, parser=None):
+    """{name: file} for functions commit kept but whose parameters it changed (needs Spelunk)."""
+    if parser is None:
+        return {}
+    changed = [f for f in gitutil.out("diff", "--name-only", "--no-renames", mb, commit, cwd=cwd).splitlines()
+               if CODE.search(f)]
+    before, after = _defs(mb, changed, cwd, parser), _defs(commit, changed, cwd, parser)
+    out = {}
+    for f in changed:
+        for n, sig in before.get(f, {}).items():
+            new = after.get(f, {}).get(n)
+            if not sig or not new or new == sig:
+                continue
+            a, b = arity(sig, n), arity(new, n)
+            if a and b and (a[0] != b[0] or b[1] < a[1]):
+                out[n] = f
+    return out
+
+
+@lru_cache(maxsize=512)
+def added_calls(mb, commit, cwd, parser):
+    """{file: {name, ...}} for calls in the lines commit added, from Spelunk's call sites."""
+    diff = gitutil.out("diff", "-U0", "--no-renames", "--no-color", mb, commit, cwd=cwd)
+    lines, cur = {}, None
+    for line in diff.splitlines():
+        if line.startswith("+++ "):
+            cur = line[6:] if line.startswith("+++ b/") and CODE.search(line) else None
+        elif cur and line.startswith("@@"):
+            m = re.match(r"@@ -\S+ \+(\d+)(?:,(\d+))? @@", line)
+            if m:
+                start, count = int(m.group(1)), int(m.group(2) or 1)
+                lines.setdefault(cur, set()).update(range(start, start + count))
+    facts = _spelunk_facts(parser, commit, sorted(lines), cwd)
+    out = {}
+    for f, added in lines.items():
+        for ref, ln in (facts.get(f) or {}).get("callSites", []):
+            if ln in added:
+                out.setdefault(f, set()).add(ref.rsplit(".", 1)[-1])
+    return out
+
+
+@lru_cache(maxsize=512)
+def removed_names(mb, commit, cwd, parser=None):
     """{name: file} for names defined at mb that no longer exist anywhere commit changed."""
     changed = gitutil.out("diff", "--name-only", "--no-renames", mb, commit, cwd=cwd).splitlines()
     changed = [f for f in changed if CODE.search(f)]
     before, after = {}, set()
+    defs_before, defs_after = _defs(mb, changed, cwd, parser), _defs(commit, changed, cwd, parser)
     for f in changed:
-        for n in defined_names(f, _show(mb, f, cwd)):
+        for n in defs_before.get(f, {}):
             before.setdefault(n, f)
-        after |= defined_names(f, _show(commit, f, cwd))
+        after |= set(defs_after.get(f, {}))
     gone = {n: f for n, f in before.items() if n not in after}  # moved to another changed file = not removed
     if gone:  # still declared somewhere else in the tree? then uses of it are fine
         rc, found = gitutil.git("grep", "-h", "-o", "-w", "-E",
@@ -90,7 +201,7 @@ def added_lines(mb, commit, cwd):
 
 
 def uses(removed, added):
-    """[(name, file)] where an added line uses a removed name (and doesn't define it again)."""
+    """[(name, file, "removed")] where an added line uses a removed name (and doesn't define it again)."""
     if not removed:
         return []
     pattern = re.compile(r"\b(" + "|".join(map(re.escape, sorted(removed))) + r")\b")
@@ -100,18 +211,32 @@ def uses(removed, added):
             if line.lstrip().startswith(("#", "//", "*")):
                 continue
             for m in pattern.finditer(line):
-                hits.add((m.group(1), f))
+                hits.add((m.group(1), f, "removed"))
     return sorted(hits)
 
 
-def broken_uses(base, remover, user, cwd):
-    """Names `remover` removed (relative to base) that `user` added new uses of. [(name, file_in_user)]."""
+def hits_between(mb_r, remover, mb_u, user, cwd, parser=None):
+    """What `remover` (since mb_r) breaks in the code `user` added (since mb_u): [(name, file_in_user, how)].
+
+    how is "removed" (the name is gone) or "signature" (its parameters changed and user calls it)."""
+    cwd = str(cwd)
+    found = uses(removed_names(mb_r, remover, cwd, parser), added_lines(mb_u, user, cwd))
+    changed = changed_signatures(mb_r, remover, cwd, parser)
+    if changed:
+        for f, names in added_calls(mb_u, user, cwd, parser).items():
+            found += [(n, f, "signature") for n in sorted(names & set(changed))]
+    return sorted(set(found))
+
+
+def broken_uses(base, remover, user, cwd, parser=None):
+    """Names `remover` removed or changed (relative to base) that `user` added new uses of."""
     mb_r = gitutil.out("merge-base", base, remover, cwd=cwd)
     mb_u = gitutil.out("merge-base", base, user, cwd=cwd)
     if not mb_r or not mb_u:
         return []
-    return uses(removed_names(mb_r, remover, str(cwd)), added_lines(mb_u, user, str(cwd)))
+    return hits_between(mb_r, remover, mb_u, user, cwd, parser)
 
 
 def describe(hits):
-    return [f"{f} uses {n}()" for n, f in hits]
+    return [f"{f} calls {n}(), whose parameters changed" if how == "signature" else f"{f} uses {n}()"
+            for n, f, how in hits]

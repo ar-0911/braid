@@ -241,6 +241,8 @@ def build_report(store, agent, base, base_oid, new_oid, diff, tests, reviewers, 
         "commits": gitutil.out("log", "--format=%h %s", "--no-merges", f"{base_oid}..{new_oid}",
                                cwd=store.repo).splitlines()[:30],
     }
+    from . import spelunk
+    report["spelunk"] = spelunk.impact(store, base_oid, new_oid)
     report.update(fallback_summary(report))
     llm = llm_summary(store, report, diff)
     if llm:
@@ -356,14 +358,17 @@ def fallback_summary(r):
     for e in r["entities"]:
         if e.get("used_by"):
             impact.append(f"{e['name']} ({e['change']}) is used in {', '.join(e['used_by'][:5])}")
+    from .spelunk import impact_text
+    sp = r.get("spelunk")
     risk = "low"
-    if any(e["change"] == "removed" and e.get("used_by") for e in r["entities"]) or r["resolution"]:
+    if any(e["change"] == "removed" and e.get("used_by") for e in r["entities"]) or r["resolution"] \
+            or (sp and any(x["severity"] == "high" for x in sp["risks"])):
         risk = "high"
-    elif impact or r["added"] + r["removed"] > 400:
+    elif impact or r["added"] + r["removed"] > 400 or (sp and (sp["routes"] or sp["untested"])):
         risk = "medium"
-    return {"title": title[:120], "summary": " ".join(parts),
-            "impact": ("; ".join(impact) + ".") if impact else "No other files use what changed.",
-            "risk": risk, "summary_by": "braid"}
+    text = ("; ".join(impact) + ".") if impact else ("" if sp else "No other files use what changed.")
+    text = " ".join(t for t in (text, impact_text(sp)) if t) or "No other files use what changed."
+    return {"title": title[:120], "summary": " ".join(parts), "impact": text, "risk": risk, "summary_by": "braid"}
 
 
 def llm_summary(store, report, diff):
@@ -371,6 +376,8 @@ def llm_summary(store, report, diff):
     if not template:
         return None
     facts = {k: report[k] for k in ("task", "agent_summary", "base", "files", "entities", "reviews", "resolution")}
+    if report.get("spelunk"):
+        facts["spelunk_impact"] = report["spelunk"]  # routes reached, tests to run, untested code, risks
     facts["tests"] = {k: report["tests"][k] for k in ("ran", "passed", "counts")}
     prompt = (
         "You are writing the approval summary a busy developer reads on their phone before letting an AI agent's "

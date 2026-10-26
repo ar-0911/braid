@@ -109,6 +109,17 @@ The home screen answers three questions, top to bottom:
 
 The menu (top right) holds the rest: messages, possible conflicts and the activity log; **Every command**, a form for each braid command built from the CLI's own options plus a box for any braid or git command, so nothing the CLI can do is missing; settings; what you ran from the page; and land all, push, the watcher switch and stop all. Every button runs the real command in your repo, and a small bar at the bottom shows it running, with its output one click away. The page listens on this machine only (`--bind` to change it), and every request needs the secret key in the link it prints. Closing it stops nothing: agents and the watcher keep running.
 
+### Sharper with Spelunk (optional)
+
+[Spelunk](https://github.com/ar-0911/spelunk) indexes a repository with tree-sitter: symbols, calls, imports, routes, tests and risks, in 19 languages. braid works without it. When the `spelunk` command is on your PATH, braid uses it automatically (`braid settings spelunk off` to stop, `braid doctor` shows whether it's found):
+
+- **Plans follow the code.** `braid do` gives the planner Spelunk's module map and what depends on what, so tasks split along real module lines.
+- **Agents look things up instead of grepping.** Every agent gets Spelunk's MCP tools (`where`, `trace`, `dependents`, `impact`, `agents`, ...) over its own worktree, next to braid's.
+- **More semantic conflicts caught.** Definitions and call sites come from Spelunk's parsers, so methods and every language count, and a function whose parameters one agent changed while another agent's new code calls it is flagged too.
+- **Approvals say what a change reaches.** The summary, message and review page list the routes it reaches, the tests that cover it, changed code no test reaches, settings it reads and risks in the changed lines (`spelunk impact`).
+
+Spelunk can also show braid's agents on its code map and dashboard and hand risks or an error to braid as tasks; see its README. The two talk only through each other's command line (`spelunk impact --json`, `braid agents --json`), so each installs and runs on its own.
+
 ### Everyday commands
 
 | you want to | run |
@@ -117,7 +128,7 @@ The menu (top right) holds the rest: messages, possible conflicts and the activi
 | start agents | `braid start "task" ["task" ...]` (`--base feature/x`, `--no-launch` to drive them yourself) |
 | plan and run a goal | `braid do "goal"`, then `braid plans`, `braid plans show 1`, `braid plans cancel 1` |
 | use braid from your Claude session | `braid connect` |
-| see everything | `braid status [--live]` (also shows `git status` for where you are) |
+| see everything | `braid status [--live]` (also shows `git status` for where you are; `--json` for scripts) |
 | steer it all from a web page | `braid dashboard [--port 8770] [--no-open]` |
 | just the agents | `braid agents` (in a repo where braid isn't set up yet, `braid status` is plain `git status` plus a note to run `braid init`) |
 | activity / messages | `braid feed -f`, `braid chat`, `braid chat --post "use the v2 API" --to login` |
@@ -216,6 +227,8 @@ Guard rails for agents: `ready_to_land` refuses while the agent has unread confl
 | `approve.push` | `true` | push after an approved landing |
 | `approve.tunnel` / `approve.public_url` | (none) | `cloudflared`, or your own URL, so the review page opens on your phone |
 | `approve.whatsapp.*`, `approve.telegram.chat_id`, `approve.email.*`, `approve.command` | | channel details, see above; secrets go in `braid approvals secret` |
+| `spelunk` | `auto` | use [Spelunk](https://github.com/ar-0911/spelunk) when it's on PATH; `on` or `off` |
+| `spelunk.command` | `spelunk` | how to run it, e.g. `node ~/spelunk/dist/cli.js` |
 
 Use a different agent CLI: `braid settings agent.command "my-agent --mcp {mcp_config} --task {prompt}"`.
 
@@ -224,7 +237,7 @@ Use a different agent CLI: `braid settings agent.command "my-agent --mcp {mcp_co
 - `.git/braid/state.db`: shared memory (SQLite), shared by all worktrees.
 - `.git/braid/secrets.json`: channel passwords and tokens (mode 600; environment variables of the same name win).
 - `.git/braid/logs/<agent>.log`: each agent's output. `.git/braid/daemon.log`: the watcher.
-- `<repo>.agents/<agent>/`: agent worktrees, next to your repo. `<repo>.agents/.integration/` is the landing worktree.
+- `<repo>.agents/<agent>/`: agent worktrees, next to your repo. `<repo>.agents/.integration/` is the landing worktree, and `<repo>.agents/.spelunk/` the checkout Spelunk indexes for plans and approvals.
 - `refs/braid/wip/<agent>`: latest snapshot of each agent's work, including uncommitted changes.
 - `.git/info/attributes` and `.git/info/exclude`: the merge driver and build junk ignores (local only, your `.gitignore` is untouched).
 
@@ -234,7 +247,7 @@ Use a different agent CLI: `braid settings agent.command "my-agent --mcp {mcp_co
 python -m unittest discover -s tests -v
 ```
 
-87 tests, including end-to-end runs where `braid start` and `braid do` launch real processes (scripted fake agents) and the watcher reviews, resolves and lands them.
+100 tests, including end-to-end runs where `braid start` and `braid do` launch real processes (scripted fake agents) and the watcher reviews, resolves and lands them.
 
 ## Status and roadmap
 

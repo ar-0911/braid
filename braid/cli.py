@@ -9,7 +9,7 @@ import sys
 import time
 from pathlib import Path
 
-from . import __version__, approvals_cli, gitutil, land, notify, planner, predict, runapprove, structmerge
+from . import __version__, approvals_cli, gitutil, land, notify, planner, predict, runapprove, spelunk, structmerge
 from .store import DEFAULTS, Store
 
 HOOK_MARKER = "# installed by braid"
@@ -127,7 +127,7 @@ def cmd_init(args):
     exclude = common / "info" / "exclude"
     ex = exclude.read_text() if exclude.exists() else ""
     if ATTR_BEGIN not in ex:
-        junk = ["__pycache__/", "*.pyc", ".pytest_cache/", "node_modules/", ".DS_Store", "*.egg-info/"]
+        junk = ["__pycache__/", "*.pyc", ".pytest_cache/", "node_modules/", ".DS_Store", "*.egg-info/", ".spelunk/"]
         exclude.write_text(ex.rstrip("\n") + ("\n" if ex.strip() else "") + "\n".join([ATTR_BEGIN] + junk + [ATTR_END]) + "\n")
 
     # remember conflict resolutions so they replay automatically
@@ -162,10 +162,15 @@ def agent_paths(store, name):
 def write_mcp_config(store, name):
     cfg, _, _ = agent_paths(store, name)
     cfg.parent.mkdir(parents=True, exist_ok=True)
-    cfg.write_text(json.dumps({"mcpServers": {"braid": {
+    servers = {"braid": {
         "command": sys.executable, "args": ["-m", "braid", "mcp"],
         "env": {"PYTHONPATH": PKG_PARENT, "BRAID_AGENT": name, "BRAID_REPO": str(store.repo)},
-    }}}, indent=2))
+    }}
+    a = store.agent(name)
+    sp = spelunk.mcp_server(store, a["worktree"]) if a else None
+    if sp:
+        servers["spelunk"] = sp
+    cfg.write_text(json.dumps({"mcpServers": servers}, indent=2))
     return cfg
 
 
@@ -179,6 +184,8 @@ def launch(store, agent, prompt):
     test = store.cfg("test.command")
     if test and cmd.lstrip().startswith("claude "):
         cmd += " --allowedTools " + shlex.quote(f"Bash({test}:*)")  # let the agent run the project's tests
+    if cmd.lstrip().startswith("claude ") and "spelunk" in json.loads(cfg.read_text()).get("mcpServers", {}):
+        cmd += " --allowedTools mcp__spelunk"  # read-only code lookups
     env = {**os.environ, "BRAID_AGENT": agent["name"], "BRAID_REPO": str(store.repo)}
     with log.open("a") as f:
         f.write(f"\n--- {time.strftime('%Y-%m-%d %H:%M:%S')} launching ---\n")
@@ -212,6 +219,8 @@ def create_agent(store, task, name=None, base=None, brief=None, launch_it=True, 
     test = store.cfg("test.command")
     prompt = AGENT_PROMPT.format(name=name, task=brief or task, branch=branch, base=base,
                                  tests=f"run them with: {test}" if test else "if the project has any")
+    if spelunk.enabled(store):
+        prompt += spelunk.AGENT_HINT
     agent = store.agent(name)
     if launch_it:
         launch(store, agent, prompt)
@@ -472,8 +481,25 @@ def render_status(store):
     return "\n".join(lines)
 
 
+def status_json(store):
+    """`braid status --json` / `braid agents --json`: what other tools (Spelunk) need, as one JSON object."""
+    from . import dashboard
+    st = dashboard.state(store.repo)
+    for a in st["agents"]:
+        snap = store.snapshot(a["name"]) if a["status"] not in ("landed", "done") else None
+        tip = (snap or {}).get("oid") or gitutil.rev(a["branch"], cwd=store.repo)
+        a["files"] = sorted(gitutil.changed_paths(a["base"], tip, cwd=store.repo)) if tip else []
+    keep = ("repo", "name", "base", "daemon", "agents", "risks", "decisions", "plans", "approvals", "approvals_on")
+    return {"schema": 1, "version": __version__, **{k: st[k] for k in keep}}
+
+
 def cmd_status(args):
     store = open_store()
+    if getattr(args, "json", False):
+        if args.refresh:
+            predict.check(store)
+        print(json.dumps(status_json(store), indent=1, default=str))
+        return
     if not args.live:
         here = gitutil.out("status", "--short", "--branch")
         print(here + "\n")
@@ -805,6 +831,11 @@ def cmd_doctor(args):
                                                            cwd=store.repo, check=False)[0] == 0,
               "braid remote add origin <url>, needed only for push")
         check("daemon running", bool(daemon_pid(store)), "braid daemon start")
+        if store.cfg("spelunk").lower() != "off":  # optional: sharper plans, conflicts and approvals
+            ver = spelunk.installed_version(store)
+            check(f"Spelunk {ver}" if ver else "Spelunk (optional)", bool(ver),
+                  "install https://github.com/ar-0911/spelunk for better plans, conflict hints and approval "
+                  "summaries, or braid settings spelunk off")
     except gitutil.GitError:
         check("inside a git repo", False, "run braid init")
     from shutil import which
@@ -936,8 +967,10 @@ def build_parser():
     s = add("status", cmd_status, "agents, ownership, predicted conflicts, decisions")
     s.add_argument("--live", action="store_true", help="keep refreshing")
     s.add_argument("--refresh", action="store_true", help="run a fresh conflict check first")
+    s.add_argument("--json", action="store_true", help="print agents, their changed files, risks and plans as JSON")
 
-    add("agents", cmd_agents, "just the agents, plans and predicted conflicts (braid status without git's part)")
+    s = add("agents", cmd_agents, "just the agents, plans and predicted conflicts (braid status without git's part)")
+    s.add_argument("--json", action="store_true", help="the same as JSON, for other tools")
     s = add("feed", cmd_log, "activity feed: what every agent and braid did")
     s.add_argument("-n", type=int, default=30)
     s.add_argument("-f", "--follow", action="store_true")
@@ -1061,6 +1094,9 @@ def cmd_agents(args):
         print("braid isn't set up in this repo yet, so there are no agents. Run `braid init` here once, then "
               "`braid do \"goal\"` or `braid start \"task\"`.", file=sys.stderr)
         sys.exit(1)
+    if args.json:
+        print(json.dumps(status_json(open_store()), indent=1, default=str))
+        return
     print(render_status(open_store()))
 
 

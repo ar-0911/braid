@@ -144,6 +144,8 @@ DEFAULTS = {
     "plan.max_tasks": "6",
     "plan.serialize": "true",          # tasks that own the same file run one after the other, not in parallel
     "agent.auto_resume": "2",          # times the daemon relaunches an agent that stopped with feedback to handle
+    "spelunk": "auto",                 # use Spelunk when it is installed: auto, on, off (see braid/spelunk.py)
+    "spelunk.command": "spelunk",
 }
 
 

@@ -9,7 +9,7 @@ import re
 import shlex
 import subprocess
 
-from . import gitutil
+from . import gitutil, spelunk
 
 MAX_LISTING = 400
 
@@ -31,7 +31,7 @@ Rules:
 
 The repository has {count} tracked files{listing_note}:
 {listing}
-{hotspots}{readme}
+{hotspots}{readme}{spelunk}
 Read any files you need to understand the codebase. Then answer with ONLY a JSON object, no other text:
 {{"tasks": [{{"id": "short-kebab-id", "title": "one line", "description": "the brief", "files": ["path/or/dir/"], "depends_on": []}}]}}
 """
@@ -69,8 +69,12 @@ def ask_planner(store, goal, base, max_tasks):
     hot_s = ("\nHotspot files, changed most often, that several tasks may want to edit: " + ", ".join(hot)
              + ". Put changes to a hotspot in ONE task (often the early foundation task) instead of several.\n"
              if hot else "")
+    sp = spelunk.overview(store, base)
+    sp_s = ("\nSpelunk's map of the code (modules, what each depends on, entry points, commands). Split along these "
+            "modules where you can, and give a module and the modules that depend on it to the same task, or make "
+            "the depending task wait for it:\n" + sp + "\n" if sp else "")
     prompt = PLAN_PROMPT.format(goal=goal, max_tasks=max_tasks, count=count, listing=listing or "(empty repo)",
-                                listing_note=note, readme=readme, hotspots=hot_s)
+                                listing_note=note, readme=readme, hotspots=hot_s, spelunk=sp_s)
     cmd = store.cfg("plan.command").format(prompt=shlex.quote(prompt))
     try:
         proc = subprocess.run(cmd, shell=True, cwd=store.repo, capture_output=True, text=True, timeout=1200,

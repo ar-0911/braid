@@ -7,7 +7,7 @@ same file" shows up as a harmless overlap, and only real clashes show up as conf
 from itertools import combinations
 from pathlib import Path
 
-from . import gitutil, regen, semantic
+from . import gitutil, regen, semantic, spelunk
 
 _seen = {}  # worktree -> (fingerprint, snapshot oid), so an untouched worktree isn't snapshotted again
 
@@ -61,13 +61,14 @@ def predict(store, snaps):
     bases = {a["name"]: store.agent_base(a) for a in store.live_agents()}
     changed = {name: gitutil.changed_paths(bases[name], oid, cwd=repo) for name, oid in snaps.items()}
     rules = regen.rules(store)
+    parser = spelunk.parser(store)
     found = {}
 
     for a, b in combinations(sorted(snaps), 2):
         if bases[a] != bases[b]:
             continue
         for remover, user in ((a, b), (b, a)):
-            hits = semantic.broken_uses(bases[a], snaps[remover], snaps[user], repo)
+            hits = semantic.broken_uses(bases[a], snaps[remover], snaps[user], repo, parser)
             if hits:
                 _add(found, a, b, "semantic", semantic.describe(hits))
         shared = changed[a] & changed[b]
@@ -98,8 +99,7 @@ def predict(store, snaps):
         if conflicted:
             _add(found, name, f"@{base}", "conflict", conflicted)
             continue
-        hits = semantic.uses(semantic.removed_names(mb, base_oid, str(repo)),
-                             semantic.added_lines(mb, oid, str(repo)))
+        hits = semantic.hits_between(mb, base_oid, mb, oid, repo, parser)
         if hits:
             _add(found, name, f"@{base}", "semantic", semantic.describe(hits))
     return [(a, b, sev, files) for (a, b), (sev, files) in found.items()]
@@ -181,9 +181,11 @@ def check(store):
             if files_s == "tests fail when merged":
                 continue  # test_merges already told them, with the output
             where = f"the {b[1:]} branch" if b.startswith("@") else b
-            text = (f"Likely semantic conflict with {where}: one side removed or renamed a name the other side "
-                    f"still uses ({files_s}). The text merges, but the code would break. ")
-            text += ("Call sync and update your code to the new names." if b.startswith("@") else
+            what = ("changed the parameters of a function the other side calls" if "whose parameters changed" in files_s
+                    and " uses " not in files_s else "removed or renamed a name the other side still uses")
+            text = (f"Likely semantic conflict with {where}: one side {what} ({files_s}). The text merges, but the "
+                    f"code would break. ")
+            text += ("Call sync and update your code to match." if b.startswith("@") else
                      "Agree with them via post_note who adapts.")
             for me in ((a,) if b.startswith("@") else (a, b)):
                 store.post_note("braid", "conflict", text, to=me)
