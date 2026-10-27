@@ -163,7 +163,7 @@ The menu (top right) holds the rest: messages, possible conflicts and the activi
 
 It also looks for **semantic conflicts**, which merge cleanly as text but break the code: when one side removes or renames a function, class or method that the other side's new code still calls, both get a warning naming the use. And when two agents' committed work overlaps and merges cleanly, the watcher runs your tests on the combination (each side alone must pass first, so a failure points at the mix). Unchanged worktrees and already-merged pairs are skipped, so an idle agent costs one `git status` per pass.
 
-**3. Code-aware merging.** `braid init` registers a git merge driver for Python and brace languages (JS/TS, Go, Rust, Java, Kotlin, C/C++, C#, Swift, PHP, Scala, Dart). It merges by function, class, method and import rather than by line, so two agents adding different functions, methods or imports to the same file merge cleanly. It works in every git merge in the repo, including the predictor's. Only an entity changed differently on both sides falls back to a line merge, and anything it can't parse falls back to plain git. `rerere` is on, so a resolution is replayed if the same conflict comes back.
+**3. Code-aware merging.** `braid init` registers a git merge driver for Python and brace languages (JS/TS, Go, Rust, Java, Kotlin, C/C++, C#, Swift, PHP, Scala, Dart). It merges by function, class, method and import rather than by line, so two agents adding different functions, methods or imports to the same file merge cleanly. It works in every git merge in the repo, including the predictor's. Only an entity changed differently on both sides falls back to a line merge, and statements that repeat a name (reassignments like `X = 1; X = X + 1`, or the same call several times) are treated as order-dependent: if both sides change such a group, the whole file takes git's line merge. Anything it can't parse falls back to plain git. `rerere` is on, so a resolution is replayed if the same conflict comes back.
 
 **4. Review.** When an agent finishes it calls `ready_to_land`; other agents see it in `pending_reviews` and approve or request changes. A review is tied to the exact commit, so new commits need a new review. `review.required`: `auto` (default: needs a peer's approval while a peer is still running), `yes`, `no`, or set `review.command` for an automatic reviewer.
 
@@ -172,10 +172,11 @@ It also looks for **semantic conflicts**, which merge cleanly as text but break 
 1. Merge with the code-aware driver and rerere. Most overlaps end here.
 2. **Generated files** (lockfiles, snapshots) matching a `regen` rule are rebuilt with their command instead of text-merged.
 3. Anything still conflicted goes to a **neutral resolver** (a separate agent; `resolve.command`). It is given both sides' tasks, declared intents and notes, and told to keep both intents. A **second model** (`resolve.verify_command`) then checks the result against both sides and can reject it.
-4. The **tests** (`test.command`) must pass on the merged result. A failure is retried (`test.retries`), and a pass on retry is flagged as flaky. If the tests also fail on the base branch itself, the agent isn't blamed: it waits until the base is fixed.
-5. The agents whose work is in the conflict are notified with a decision number and can `vote` accept or object during `consensus.window` seconds. An objection stops it.
-6. Otherwise `main` moves forward atomically. If `main` is checked out, it is fast-forwarded in place.
-7. If any step fails, the agent is marked **blocked** with the reason in its notes, and the watcher relaunches it to `sync` and fix it itself. The deterministic tie-break is *first to land wins; the later agent adapts*. After `agent.auto_resume` attempts it waits for you.
+4. **Semantic check** (`land.semantic`): if one side removed or renamed a function, class or method and the other side's new code still uses the old name in the merged result, the landing is blocked with the uses named, even when no test covers them.
+5. The **tests** (`test.command`) must pass on the merged result. A failure is retried (`test.retries`), and a pass on retry is flagged as flaky. If the tests also fail on the base branch itself, the agent isn't blamed: it waits until the base is fixed.
+6. The agents whose work is in the conflict are notified with a decision number and can `vote` accept or object during `consensus.window` seconds. An objection stops it.
+7. Otherwise `main` moves forward atomically. If `main` is checked out, it is fast-forwarded in place.
+8. If any step fails, the agent is marked **blocked** with the reason in its notes, and the watcher relaunches it to `sync` and fix it itself. The deterministic tie-break is *first to land wins; the later agent adapts*. After `agent.auto_resume` attempts it waits for you.
 
 Every landing is a merge commit with `Braid-Agent:` and `Reviewed-by:` trailers, so `git log` shows who did what and who checked it.
 
@@ -194,6 +195,7 @@ Guard rails for agents: `ready_to_land` refuses while the agent has unread confl
 | `review.command` | (none) | automatic reviewer; `{prompt}` is filled in, must print `VERDICT: approve` or `VERDICT: changes` |
 | `resolve.command` | `claude -p {prompt} --permission-mode acceptEdits` | neutral conflict resolver |
 | `consensus.window` | `0` | seconds parties may object to a resolution before it lands |
+| `land.semantic` | `true` | block a landing whose merged code still uses a name the other side removed or renamed |
 | `land.auto` | `true` | watcher lands agents as soon as they're ready |
 | `push.auto` | `false` | push after every landing |
 | `agent.command` | Claude Code, headless, with braid's MCP tools and git allowed | how agents are launched; `{prompt}`, `{mcp_config}`, `{name}` |

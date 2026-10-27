@@ -3,7 +3,9 @@
 Files are split into top-level entities (functions, classes, imports, ...) keyed by name, and merged
 entity by entity. Two branches that add or edit *different* entities in the same file merge cleanly
 even when git's line-based merge would report a conflict. Only an entity changed differently on both
-sides falls back to a line merge, and only that entity can carry conflict markers.
+sides falls back to a line merge, and only that entity can carry conflict markers. Statements that repeat
+a key (reassignments, the same call twice) depend on their order, so when both sides change such a group
+the whole file takes a line merge instead.
 
 Python is parsed with `ast`. Brace languages (JS/TS, Go, Rust, Java, C/C++, C#, Swift, Kotlin, PHP)
 use a column-0 heuristic, guarded by a bracket-balance check. Anything else, or anything that fails to
@@ -102,6 +104,9 @@ def _py_key(node, src_lines):
         return "assign:" + ",".join(names)
     if isinstance(node, ast.If):
         return "if:" + ast.unparse(node.test)
+    if isinstance(node, ast.Expr) and isinstance(node.value, ast.Call):
+        # keyed by what is called, so repeated calls (register(a); register(b)) form one ordered group
+        return "call:" + ast.unparse(node.value.func)
     return "stmt:" + " ".join("".join(src_lines).split())
 
 
@@ -205,8 +210,32 @@ def line_merge(base, ours, theirs, labels=("ours", "base", "theirs")):
         return proc.stdout, proc.returncode == 0
 
 
+_REPEAT = re.compile(r"#\d+$")
+
+
+def _groups(chunks):
+    """{key without its repeat number: (chunk text, ...)} in order of appearance."""
+    out = {}
+    for key, text in chunks:
+        out.setdefault(_REPEAT.sub("", key), []).append(text)
+    return {k: tuple(v) for k, v in out.items()}
+
+
+def _check_repeats(base_chunks, our_chunks, their_chunks):
+    """Repeated same-key statements (X = 1; X = X + 1, or the same call twice) depend on their order, and
+    numbering them X, X#1, X#2 pairs them up by position, not by meaning. If both sides changed such a group
+    differently, merging it entry by entry could silently combine edits git would flag, so give up and let
+    the whole file take a line merge."""
+    b, o, t = _groups(base_chunks), _groups(our_chunks), _groups(their_chunks)
+    for key in set(b) | set(o) | set(t):
+        bg, og, tg = b.get(key, ()), o.get(key, ()), t.get(key, ())
+        if max(len(bg), len(og), len(tg)) > 1 and og != bg and tg != bg and og != tg:
+            raise Unsupported(f"repeated statements {key} changed on both sides")
+
+
 def merge_entities(base_chunks, our_chunks, their_chunks, labels, nested=None):
     """Three-way merge of keyed chunk lists. Returns (text, clean, conflicted_keys)."""
+    _check_repeats(base_chunks, our_chunks, their_chunks)
     b, o, t = dict(base_chunks), dict(our_chunks), dict(their_chunks)
     result, conflicts = {}, []
     for key in set(b) | set(o) | set(t):

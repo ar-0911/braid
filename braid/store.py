@@ -134,6 +134,7 @@ DEFAULTS = {
     "test.retries": "1",               # re-runs of a failing test suite; a pass on retry is flagged as flaky
     "predict.tests": "true",           # also run the tests on predicted merges of overlapping agents
     "regen": "",                       # generated files: "package-lock.json=npm install --package-lock-only; ..."
+    "land.semantic": "true",           # block a landing whose merge still uses a name the other side removed
     "land.auto": "true",               # the daemon lands agents as soon as they're ready
     "push.auto": "false",              # push base to the remote after every landing
     # agents may run git (pushes from agent worktrees are blocked by braid's pre-push hook) and the tests

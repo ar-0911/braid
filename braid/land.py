@@ -10,7 +10,7 @@ import subprocess
 import time
 from pathlib import Path
 
-from . import approve, gitutil, regen
+from . import approve, gitutil, regen, semantic
 from .store import RUN_PREFIX
 
 MARKER = re.compile(r"^(<<<<<<<|>>>>>>>)( |$)", re.M)
@@ -361,6 +361,18 @@ def _land(store, name, push):
             store.post_note("braid", "decision",
                             f"Decision #{did}: conflicts between {name} and {', '.join(sorted(parties))} in "
                             f"{', '.join(files)} were resolved: {detail}. Use vote to accept or object.", to=p)
+
+    mb = gitutil.out("merge-base", base_oid, head, cwd=repo)
+    if mb != base_oid and store.cfg_bool("land.semantic"):
+        # the text merged, but one side may still call what the other renamed or removed; tests may not cover it
+        broken = semantic.merge_breaks(mb, base_oid, head, gitutil.rev("HEAD", cwd=integ), repo)
+        if broken:
+            if did:
+                store.decide(did, "rejected", "the merged code uses names that no longer exist")
+            store.event("conflict", f"semantic conflict with {base}: {', '.join(semantic.describe(broken))}", name)
+            return _block(store, name, f"merging with {base} leaves calls to names one side removed or renamed: "
+                                       f"{', '.join(semantic.describe(broken))}. Call sync, update those uses "
+                                       "to the new names, commit, then call ready_to_land again.")
 
     passed, output = run_tests_retrying(store, integ, f"landing {name}")
     if not passed and store.cfg("test.command") and not check_base_tests(store, base, base_oid, integ):

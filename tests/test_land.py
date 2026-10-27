@@ -5,7 +5,7 @@ import time
 import unittest
 from pathlib import Path
 
-from helpers import ENV, RepoCase, braid, sh
+from helpers import BASE_SRC, ENV, RepoCase, braid, sh
 from braid import land
 from braid.mcp_server import Server
 
@@ -139,6 +139,65 @@ class Landing(RepoCase):
         self.assertIn("pushed", r.stdout)
         self.assertEqual(sh("git", "rev-parse", "main", cwd=remote).stdout, sh("git", "rev-parse", "main",
                                                                                cwd=self.repo).stdout)
+
+
+class SemanticLanding(RepoCase):
+    """A rename on one side and a new call to the old name on the other merge cleanly as text. With no tests
+    to catch it, only the semantic check in the landing queue stops the second one from landing broken code."""
+    agents = ()
+
+    def setUp(self):
+        super().setUp()
+        (self.repo / "m.py").write_text(BASE_SRC + "\n\ndef load_items():\n    return []\n")
+        sh("git", "commit", "-qam", "add load_items", cwd=self.repo)
+        braid("start", "--no-launch", "--no-daemon", "Task One", "Task Two", cwd=self.repo)
+        self.store.set_cfg("review.required", "no")
+        self.renamer, self.caller = Server(self.repo, "task-one"), Server(self.repo, "task-two")
+
+    def make_ready(self, first):
+        # both are ready before either lands, so ready_to_land's own check can't see the clash
+        self.edit(self.wt2, "x = 1\n", "from m import load_items\n\nx = load_items()\n", "other.py")
+        self.commit(self.wt2, "use load_items")
+        self.assertTrue(self.caller.call("ready_to_land", {"summary": "new caller"})["ok"])
+        self.edit(self.wt1, "def load_items():", "def fetch_items():")
+        self.commit(self.wt1, "rename load_items")
+        self.assertTrue(self.renamer.call("ready_to_land", {"summary": "rename"})["ok"])
+        self.store.update_agent(first, ready_at=0)
+
+    def test_rename_landed_first_blocks_new_caller(self):
+        self.make_ready("task-one")
+        r = braid("land", cwd=self.repo, check=False)
+        self.assertIn("landed  task-one", r.stdout)
+        self.assertIn("blocked  task-two", r.stdout)
+        self.assertIn("other.py uses load_items()", r.stdout)
+        self.assertNotIn("load_items", self.show("main", "other.py"))
+        self.assertEqual(self.store.agent("task-two")["status"], "blocked")
+        self.assertTrue(any("other.py uses load_items()" in n["text"] for n in self.store.notes(for_agent="task-two")))
+
+    def test_new_caller_landed_first_blocks_rename(self):
+        self.make_ready("task-two")
+        r = braid("land", cwd=self.repo, check=False)
+        self.assertIn("landed  task-two", r.stdout)
+        self.assertIn("blocked  task-one", r.stdout)
+        self.assertIn("other.py uses load_items()", r.stdout)
+        self.assertIn("def load_items():", self.show("main"))
+
+    def test_fixed_caller_lands(self):
+        self.make_ready("task-one")
+        braid("land", cwd=self.repo, check=False)
+        land.sync(self.store, "task-two")
+        self.edit(self.wt2, "load_items", "fetch_items", "other.py")
+        self.commit(self.wt2, "follow the rename")
+        self.caller.call("read_notes", {})
+        self.assertTrue(self.caller.call("ready_to_land", {"summary": "fixed"})["ok"])
+        r = braid("land", cwd=self.repo)
+        self.assertIn("landed  task-two", r.stdout)
+
+    def test_can_be_turned_off(self):
+        self.store.set_cfg("land.semantic", "false")
+        self.make_ready("task-one")
+        r = braid("land", cwd=self.repo)
+        self.assertEqual(r.stdout.count("landed  "), 2, r.stdout)
 
 
 class ReviewGate(RepoCase):
