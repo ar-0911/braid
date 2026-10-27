@@ -184,6 +184,32 @@ def render_email_card(a, url):
         f"</table></td></tr></table></body></html>")
 
 
+def _spelunk_card(sp):
+    """What Spelunk says the change reaches: routes, tests, untested code, risks in the changed lines."""
+    if not sp:
+        return ""
+    rows = []
+    if sp["routes"]:
+        rows.append("<b>Routes to re-check</b><ul>" + "".join(
+            f"<li><code>{_e(x['method'])} {_e(x['path'])}</code> <span class='meta'>{_e(x['where'])}: "
+            f"{_e(x['reason'])}</span></li>" for x in sp["routes"]) + "</ul>")
+    if sp["tests"]:
+        rows.append("<b>Tests that cover it</b><ul>" + "".join(f"<li><code>{_e(t)}</code></li>" for t in sp["tests"])
+                    + "</ul>")
+    if sp["untested"]:
+        rows.append("<b>Changed code no test reaches</b><ul>" + "".join(
+            f"<li><code>{_e(t)}</code></li>" for t in sp["untested"]) + "</ul>")
+    if sp["risks"]:
+        rows.append("<b>Risks in the changed lines</b><ul>" + "".join(
+            f"<li>{_e(x['severity'])}: {_e(x['title'])} <span class='meta'>{_e(x['where'])}</span></li>"
+            for x in sp["risks"]) + "</ul>")
+    if sp["env"]:
+        rows.append("<b>Settings read</b> " + ", ".join(f"<code>{_e(x)}</code>" for x in sp["env"]))
+    head = (f"{sp['dependents']} file{'s' * (sp['dependents'] != 1)} depend on the changed code"
+            + (f", in {', '.join(_e(m) for m in sp['modules'][:6])}" if sp["modules"] else "") + ".")
+    return f"<h2>What it reaches <span class='meta'>(Spelunk)</span></h2><div class='card'>{head}{''.join(rows)}</div>"
+
+
 def render(store, a, mode="web", url="", page_id=None):
     """mode: web (interactive), static (a saved file), email (an HTML email body).
     page_id is the approval's name in page links (the worker names it differently)."""
@@ -226,6 +252,7 @@ def render(store, a, mode="web", url="", page_id=None):
             f"<li><code>{_e(e['name'])}</code> ({_e(e['change'])}) is used in "
             f"{', '.join('<code>' + _e(u) + '</code>' for u in e['used_by'][:6])}</li>" for e in users[:12]) + "</ul>")
     parts.append("</div>")
+    parts.append(_spelunk_card(r.get("spelunk")))
     if r.get("resolution"):
         parts.append(f"<h2>Conflict resolution</h2><div class='card'>{_e(r['resolution'])}</div>")
 

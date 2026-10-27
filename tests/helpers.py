@@ -9,6 +9,8 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 os.environ["BRAID_HOME"] = tempfile.mkdtemp(prefix="braid-home-")  # never read the real ~/.config/braid
+# a Spelunk installed on this machine must not change what the tests see; test_spelunk turns a fake one on
+Path(os.environ["BRAID_HOME"], "settings.json").write_text('{"spelunk": "off"}')
 ENV = {**os.environ, "PYTHONPATH": str(ROOT), "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t",
        "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t", "NO_COLOR": "1"}
 os.environ.update({k: ENV[k] for k in ("GIT_AUTHOR_NAME", "GIT_AUTHOR_EMAIL", "GIT_COMMITTER_NAME",
