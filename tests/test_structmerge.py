@@ -133,6 +133,17 @@ class BraceMerge(unittest.TestCase):
         self.assertIn("return 10", text)
         self.assertIn("return 20", text)
 
+    def test_repeated_assignment_changed_on_both_sides_conflicts(self):
+        base = "X = 1;\nX = X + 1;\n"
+        _, clean, how = merge_text(base, base + "X = X * 10;\n", "X = 1;\nX = X + 5;\n", "m.js")
+        self.assertFalse(clean)
+        self.assertEqual(how, "line")
+
+    def test_repeated_calls_changed_on_both_sides_conflict(self):
+        base = "app.use(a);\napp.use(b);\n"
+        _, clean, _ = merge_text(base, base.replace("use(b)", "use(b, opts)"), base + "app.use(c);\n", "m.js")
+        self.assertFalse(clean)
+
     def test_unknown_extension_uses_line_merge(self):
         _, clean, how = merge_text("a\n", "b\n", "c\n", "notes.txt")
         self.assertFalse(clean)
