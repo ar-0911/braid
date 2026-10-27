@@ -176,13 +176,18 @@ def removed_names(mb, commit, cwd, parser=None):
             before.setdefault(n, f)
         after |= set(defs_after.get(f, {}))
     gone = {n: f for n, f in before.items() if n not in after}  # moved to another changed file = not removed
-    if gone:  # still declared somewhere else in the tree? then uses of it are fine
-        rc, found = gitutil.git("grep", "-h", "-o", "-w", "-E",
-                                r"(def|class|function|func|fn|struct|interface|type|const|let|var)\s+("
-                                + "|".join(map(re.escape, gone)) + ")", commit, "--", cwd=cwd, check=False)
-        for line in found.splitlines():
-            gone.pop(line.split()[-1].split(":")[-1], None)
-    return gone
+    declared = _declared(gone, commit, cwd)  # still declared somewhere else in the tree? then uses are fine
+    return {n: f for n, f in gone.items() if n not in declared}
+
+
+def _declared(names, commit, cwd):
+    """The subset of names that something in commit's tree declares."""
+    if not names:
+        return set()
+    rc, found = gitutil.git("grep", "-h", "-o", "-w", "-E",
+                            r"(def|class|function|func|fn|struct|interface|type|const|let|var)\s+("
+                            + "|".join(map(re.escape, names)) + ")", commit, "--", cwd=cwd, check=False)
+    return {line.split()[-1].split(":")[-1] for line in found.splitlines()}
 
 
 @lru_cache(maxsize=512)
@@ -235,6 +240,19 @@ def broken_uses(base, remover, user, cwd, parser=None):
     if not mb_r or not mb_u:
         return []
     return hits_between(mb_r, remover, mb_u, user, cwd, parser)
+
+
+def merge_breaks(mb, ours, theirs, merged, cwd):
+    """[(name, file)] where one side's new code uses a name the other side removed, and the merged commit
+    still has that use and declares the name nowhere. Used by the landing queue on the real merge result."""
+    cwd = str(cwd)
+    hits = set(uses(removed_names(mb, theirs, cwd), added_lines(mb, ours, cwd)))
+    hits |= set(uses(removed_names(mb, ours, cwd), added_lines(mb, theirs, cwd)))
+    if not hits:
+        return []
+    declared = _declared({n for n, _ in hits}, merged, cwd)
+    return sorted((n, f) for n, f in hits
+                  if n not in declared and re.search(rf"\b{re.escape(n)}\b", _show(merged, f, cwd)))
 
 
 def describe(hits):
