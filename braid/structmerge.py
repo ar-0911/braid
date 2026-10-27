@@ -117,6 +117,7 @@ _BRACE_DECL = re.compile(
     r"\s+(?:\([^)]*\)\s*)?([A-Za-z_$][\w$]*)")
 _IMPORT = re.compile(r"^\s*(import\b|from\s+\S+\s+import\b|#include\b|use\s|require\(|using\s|package\s)")
 _CLOSERS = set("}])")
+_ASSIGN_OR_CALL = re.compile(r"^([A-Za-z_$][\w$.]*)\s*(\(|(?:[-+*/%&|^]|<<|>>|\?\?)?=(?!=))")
 
 
 def split_brace(text):
@@ -165,6 +166,10 @@ def _brace_key(line):
     m = re.match(r"^func\s+\(([^)]*)\)\s*([A-Za-z_]\w*)", line)
     if m:
         return f"method:{m.group(1).split()[-1].lstrip('*')}.{m.group(2)}"
+    # reassignments and calls are keyed by name, so repeats form one ordered group (see _check_repeats)
+    m = _ASSIGN_OR_CALL.match(line)
+    if m:
+        return f"{'call' if m.group(2) == '(' else 'assign'}:{m.group(1)}"
     return "line:" + " ".join(line.split())
 
 
