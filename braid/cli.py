@@ -878,7 +878,13 @@ def cmd_dashboard(args):
 
 
 def cmd_merge_driver(args):
-    sys.exit(structmerge.driver_main(args.base, args.ours, args.theirs, args.path))
+    outline = None
+    try:  # git runs drivers at the worktree root; braid init made the store, so this only reads settings
+        if (gitutil.common_dir() / "braid" / "state.db").exists():
+            outline = spelunk.outliner(Store(repo_root()))
+    except Exception:
+        pass  # never let optional tooling break a merge
+    sys.exit(structmerge.driver_main(args.base, args.ours, args.theirs, args.path, outline=outline))
 
 
 def cmd_hook(args):
