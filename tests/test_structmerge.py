@@ -70,6 +70,42 @@ class PythonMerge(unittest.TestCase):
         self.assertFalse(clean)
         self.assertIn("return 20", text)
 
+    def test_repeated_assignment_changed_on_both_sides_conflicts(self):
+        # order-dependent: entry-by-entry merging would keep both and report clean; git flags it
+        base = "X = 1\nX = X + 1\n"
+        text, clean, how = merge_text(base, base + "X = X * 10\n", "X = 1\nX = X + 5\n", "m.py")
+        self.assertFalse(clean)
+        self.assertEqual(how, "line")
+        self.assertIn("<<<<<<<", text)
+
+    def test_repeated_calls_changed_on_both_sides_conflict(self):
+        base = "setup()\nregister('a')\nregister('b')\n"
+        ours = base.replace("register('b')", "register('b', fast=True)")
+        theirs = base + "register('c')\n"
+        _, clean, _ = merge_text(base, ours, theirs, "m.py")
+        self.assertFalse(clean)
+
+    def test_repeated_group_changed_on_one_side_still_merges_structurally(self):
+        base = "X = 1\nX = X + 1\n\n\ndef a():\n    return 1\n"
+        ours = base.replace("X = X + 1", "X = X + 5")
+        theirs = base.replace("return 1", "return 2")
+        text, clean, how = merge_text(base, ours, theirs, "m.py")
+        self.assertTrue(clean)
+        self.assertEqual(how, "structural")
+        self.assertEqual(text, "X = 1\nX = X + 5\n\n\ndef a():\n    return 2\n")
+
+    def test_same_change_to_repeated_group_on_both_sides_is_clean(self):
+        base = "X = 1\nX = X + 1\n"
+        ours = theirs = base + "X = X * 10\n"
+        text, clean, _ = merge_text(base, ours, theirs, "m.py")
+        self.assertTrue(clean)
+        self.assertEqual(text, ours)
+
+    def test_repeated_class_attribute_changed_on_both_sides_conflicts(self):
+        base = "class A:\n    x = 1\n    x = x + 1\n"
+        _, clean, _ = merge_text(base, base + "    x = x * 10\n", base.replace("x + 1", "x + 5"), "m.py")
+        self.assertFalse(clean)
+
     def test_syntax_error_falls_back_to_line_merge(self):
         bad = "def (:\n"
         _, _, how = merge_text(bad, bad + "x\n", bad, "m.py")
@@ -96,6 +132,17 @@ class BraceMerge(unittest.TestCase):
         self.assertTrue(clean)
         self.assertIn("return 10", text)
         self.assertIn("return 20", text)
+
+    def test_repeated_assignment_changed_on_both_sides_conflicts(self):
+        base = "X = 1;\nX = X + 1;\n"
+        _, clean, how = merge_text(base, base + "X = X * 10;\n", "X = 1;\nX = X + 5;\n", "m.js")
+        self.assertFalse(clean)
+        self.assertEqual(how, "line")
+
+    def test_repeated_calls_changed_on_both_sides_conflict(self):
+        base = "app.use(a);\napp.use(b);\n"
+        _, clean, _ = merge_text(base, base.replace("use(b)", "use(b, opts)"), base + "app.use(c);\n", "m.js")
+        self.assertFalse(clean)
 
     def test_unknown_extension_uses_line_merge(self):
         _, clean, how = merge_text("a\n", "b\n", "c\n", "notes.txt")
