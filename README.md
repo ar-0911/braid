@@ -2,6 +2,15 @@
 
 **Run many coding agents on one repo at once, and braid their work back together.**
 
+<a href="https://docs.adityapoc.xyz/r/ar-0911/braid">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="https://docs.adityapoc.xyz/r/ar-0911/braid/card.svg?theme=dark">
+    <img alt="ar-0911/braid, explained on Elemnt" src="https://docs.adityapoc.xyz/r/ar-0911/braid/card.svg">
+  </picture>
+</a>
+
+[![Explained on Elemnt](https://docs.adityapoc.xyz/r/ar-0911/braid/badge.svg)](https://docs.adityapoc.xyz/r/ar-0911/braid)
+
 ```sh
 braid start "add OAuth login" "billing CSV export" "search filters"
 ```
@@ -258,7 +267,7 @@ Milestones done: worktree launcher and shared memory (M1), code-aware merge (M2)
 
 Next ideas: a regression suite that replays real merge history from several repos through the merge driver, `braid pr` to open one pull request per landing, running agents in containers, and a shared state server so agents on several machines can work together.
 
-See [docs/design.md](docs/design.md) for the research and design behind this.
+See [docs/design.md](docs/design.md) for the research and design behind this, and the [interactive guide](https://docs.adityapoc.xyz/r/ar-0911/braid) for a hands-on tour.
 
 ## License
 
