@@ -2,7 +2,7 @@
 
 [Spelunk](https://github.com/ar-0911/spelunk) indexes a repository with tree-sitter: symbols, calls, imports,
 routes, tests and risks, in 19 languages. When the `spelunk` command is on PATH (setting `spelunk`: `auto`, the
-default; `on` or `off` to force it) braid uses it in four places:
+default; `on` or `off` to force it) braid uses it in five places:
 
 1. `braid do`: the planner gets Spelunk's module map and dependency graph, so tasks follow real module lines.
 2. Agents get Spelunk's MCP tools (where, trace, impact, ...) next to braid's, instead of grepping.
@@ -10,6 +10,8 @@ default; `on` or `off` to force it) braid uses it in four places:
    other languages and changed signatures count too.
 4. Approvals: the summary lists the routes the change reaches, the tests to run, changed code no test reaches
    and risks in the changed lines (`spelunk impact`).
+5. The merge driver: brace languages (JS/TS, Go, Rust, Java, ...) are split with Spelunk's tree-sitter outline
+   instead of a column-0 heuristic, so two methods added to the same class merge cleanly (`spelunk outline`).
 
 Everything goes through Spelunk's command line with JSON, so neither tool imports the other. Any failure
 (not installed, too old, timed out) falls back to what braid does on its own.
@@ -205,3 +207,24 @@ def impact_text(s):
 def installed_version(store):
     out = run(store, ["--version"], cwd=Path.cwd(), timeout=20)
     return out.strip() if out else None
+
+
+# ------------------------------------------------------------------ 5. structural merges
+
+OUTLINE_TIMEOUT = 30
+
+
+def outliner(store):
+    """outline(texts, path) -> one outline per text, or None; for the merge driver. None when Spelunk is off.
+
+    Parses the texts as if they were `path` (git hands the driver temp files with no extension). Older Spelunks
+    without the outline command fail, and the driver falls back to its own splitting."""
+    if not enabled(store):
+        return None
+
+    def outline(texts, path):
+        req = json.dumps({"files": [{"path": path, "text": t} for t in texts]})
+        data = run_json(store, ["outline"], cwd=store.repo, stdin=req, timeout=OUTLINE_TIMEOUT)
+        files = data.get("files") if isinstance(data, dict) else None
+        return files if isinstance(files, list) and len(files) == len(texts) else None
+    return outline

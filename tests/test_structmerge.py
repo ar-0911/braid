@@ -1,3 +1,7 @@
+import json
+import os
+import shutil
+import subprocess
 import unittest
 
 import helpers  # noqa: F401  (sets sys.path)
@@ -148,6 +152,122 @@ class BraceMerge(unittest.TestCase):
         _, clean, how = merge_text("a\n", "b\n", "c\n", "notes.txt")
         self.assertFalse(clean)
         self.assertEqual(how, "line")
+
+
+def cls(start, end, *members, name="Store"):
+    return {"kind": "class_declaration", "name": name, "start": start, "end": end,
+            "members": [{"kind": "method_definition", "name": n, "start": a, "end": b} for n, a, b in members]}
+
+
+def fake_outline(table, calls=None):
+    """An outline function like Spelunk's, from hand-written outlines; unknown texts (merge results) parse fine."""
+    def outline(texts, path):
+        if calls is not None:
+            calls.append(len(texts))
+        return [{"path": path, "ok": True, "items": table.get(t, [])} for t in texts]
+    return outline
+
+
+class OutlineMerge(unittest.TestCase):
+    """Brace languages split by a real parser's outline (Spelunk's tree-sitter) instead of the heuristic."""
+    BASE = "class Store {\n  save(x) {\n    return x;\n  }\n}\n"
+    OURS = "class Store {\n  save(x) {\n    return x;\n  }\n\n  load() {\n    return 1;\n  }\n}\n"
+    THEIRS = "class Store {\n  save(x) {\n    return x;\n  }\n\n  remove() {\n    return 2;\n  }\n}\n"
+    TABLE = {BASE: [cls(1, 5, ("save", 2, 4))],
+             OURS: [cls(1, 9, ("save", 2, 4), ("load", 6, 8))],
+             THEIRS: [cls(1, 9, ("save", 2, 4), ("remove", 6, 8))]}
+
+    def test_two_methods_added_to_same_js_class_merge_cleanly(self):
+        calls = []
+        text, clean, how = merge_text(self.BASE, self.OURS, self.THEIRS, "store.js",
+                                      outline=fake_outline(self.TABLE, calls))
+        self.assertTrue(clean, text)
+        self.assertEqual(how, "structural")
+        self.assertEqual(text, "class Store {\n  save(x) {\n    return x;\n  }\n\n  load() {\n    return 1;\n  }\n"
+                               "\n  remove() {\n    return 2;\n  }\n}\n")
+        self.assertEqual(calls, [3, 1])  # one call for the three versions, one to check the result parses
+
+    def test_without_spelunk_the_heuristic_still_conflicts(self):
+        _, clean, _ = merge_text(self.BASE, self.OURS, self.THEIRS, "store.js")
+        self.assertFalse(clean)
+
+    def test_same_method_changed_both_ways_conflicts_only_there(self):
+        ours = self.OURS.replace("return x;", "return x + 1;")
+        theirs = self.THEIRS.replace("return x;", "return x * 2;")
+        table = {**self.TABLE, ours: self.TABLE[self.OURS], theirs: self.TABLE[self.THEIRS]}
+        text, clean, _ = merge_text(self.BASE, ours, theirs, "store.js", outline=fake_outline(table))
+        self.assertFalse(clean)
+        self.assertIn("<<<<<<< ours\n    return x + 1;\n=======\n    return x * 2;\n>>>>>>> theirs", text)
+        self.assertIn("load()", text)
+        self.assertIn("remove()", text)
+
+    def test_empty_class_gets_methods_from_both_sides(self):
+        base = "class Store {\n}\n"
+        ours = "class Store {\n  load() {}\n}\n"
+        theirs = "class Store {\n  remove() {}\n}\n"
+        table = {base: [cls(1, 2)], ours: [cls(1, 3, ("load", 2, 2))], theirs: [cls(1, 3, ("remove", 2, 2))]}
+        text, clean, _ = merge_text(base, ours, theirs, "store.ts", outline=fake_outline(table))
+        self.assertTrue(clean, text)
+        self.assertEqual(text, "class Store {\n  load() {}\n  remove() {}\n}\n")
+
+    def test_outline_failure_falls_back(self):
+        for outline in (lambda texts, path: None,
+                        lambda texts, path: [{"ok": False, "items": []}] * len(texts)):
+            _, clean, _ = merge_text(self.BASE, self.OURS, self.THEIRS, "store.js", outline=outline)
+            self.assertFalse(clean)  # the heuristic's answer, as without Spelunk
+
+    def test_result_that_does_not_parse_falls_back(self):
+        def outline(texts, path):
+            return [{"ok": len(texts) == 3, "items": self.TABLE.get(t, [])} for t in texts]
+        _, clean, how = merge_text(self.BASE, self.OURS, self.THEIRS, "store.js", outline=outline)
+        self.assertFalse(clean)
+
+    def test_python_keeps_using_ast(self):
+        calls = []
+        merge_text(PY_BASE, PY_BASE + "x = 1\n", PY_BASE + "y = 2\n", "m.py", outline=fake_outline({}, calls))
+        self.assertEqual(calls, [])
+
+
+SPELUNK = os.environ.get("BRAID_TEST_SPELUNK") or shutil.which("spelunk")
+
+
+@unittest.skipUnless(SPELUNK, "needs Spelunk (set BRAID_TEST_SPELUNK to its command)")
+class RealSpelunkOutline(unittest.TestCase):
+    """The same merges with the real `spelunk outline`, when it is installed."""
+
+    def outline(self, texts, path):
+        req = json.dumps({"files": [{"path": path, "text": t} for t in texts]})
+        out = subprocess.run([*SPELUNK.split(), "outline"], input=req, capture_output=True, text=True, check=True)
+        return json.loads(out.stdout)["files"]
+
+    def test_js_class_methods_from_both_sides(self):
+        base = "import a from 'a';\n\nexport class Store extends Base {\n  count = 0;\n\n  save(x) {\n    return x;\n  }\n}\n"
+        ours = base.replace("    return x;\n  }\n", "    return x;\n  }\n\n  load() {\n    return 1;\n  }\n")
+        theirs = base.replace("    return x;\n  }\n", "    return x;\n  }\n\n  /** Removes. */\n  remove() {\n    return 2;\n  }\n")
+        text, clean, how = merge_text(base, ours, theirs, "src/store.js", outline=self.outline)
+        self.assertTrue(clean, text)
+        self.assertLess(text.index("load()"), text.index("/** Removes. */"))
+        self.assertLess(text.index("remove()"), text.rindex("}"))
+
+    def test_ts_and_java_and_rust(self):
+        cases = {
+            "a.ts": ("export class C {\n  a(): void {}\n}\n", "  b(): void {}\n", "  @dec()\n  c(): void {}\n"),
+            "A.java": ("class A {\n  void a() {}\n}\n", "  void b() {}\n", "  @Override\n  public String toString() { return \"\"; }\n"),
+            "s.rs": ("impl S {\n    fn a(&self) {}\n}\n", "    fn b(&self) {}\n", "    fn c(&self) {}\n"),
+        }
+        for path, (base, add_o, add_t) in cases.items():
+            at = base.index("\n", base.index("\n") + 1) + 1  # after the first member
+            text, clean, how = merge_text(base, base[:at] + add_o + base[at:], base[:at] + add_t + base[at:], path,
+                                          outline=self.outline)
+            self.assertTrue(clean, (path, text))
+            self.assertIn(add_o, text)
+            self.assertIn(add_t, text)
+
+    def test_repeated_calls_changed_on_both_sides_conflict(self):
+        base = "register('a');\nregister('b');\n"
+        _, clean, _ = merge_text(base, base.replace("'b'", "'b', true"), base + "register('c');\n", "r.js",
+                                 outline=self.outline)
+        self.assertFalse(clean)
 
 
 if __name__ == "__main__":
