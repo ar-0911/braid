@@ -10,7 +10,7 @@ import subprocess
 import time
 from pathlib import Path
 
-from . import approve, gitutil, regen, semantic
+from . import approve, gitutil, regen, semantic, spelunk
 from .store import RUN_PREFIX
 
 MARKER = re.compile(r"^(<<<<<<<|>>>>>>>)( |$)", re.M)
@@ -365,12 +365,13 @@ def _land(store, name, push):
     mb = gitutil.out("merge-base", base_oid, head, cwd=repo)
     if mb != base_oid and store.cfg_bool("land.semantic"):
         # the text merged, but one side may still call what the other renamed or removed; tests may not cover it
-        broken = semantic.merge_breaks(mb, base_oid, head, gitutil.rev("HEAD", cwd=integ), repo)
+        broken = semantic.merge_breaks(mb, base_oid, head, gitutil.rev("HEAD", cwd=integ), repo,
+                                        spelunk.parser(store))
         if broken:
             if did:
                 store.decide(did, "rejected", "the merged code uses names that no longer exist")
             store.event("conflict", f"semantic conflict with {base}: {', '.join(semantic.describe(broken))}", name)
-            return _block(store, name, f"merging with {base} leaves calls to names one side removed or renamed: "
+            return _block(store, name, f"merging with {base} leaves calls to names one side removed, renamed or changed: "
                                        f"{', '.join(semantic.describe(broken))}. Call sync, update those uses "
                                        "to the new names, commit, then call ready_to_land again.")
 

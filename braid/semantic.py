@@ -242,17 +242,17 @@ def broken_uses(base, remover, user, cwd, parser=None):
     return hits_between(mb_r, remover, mb_u, user, cwd, parser)
 
 
-def merge_breaks(mb, ours, theirs, merged, cwd):
-    """[(name, file)] where one side's new code uses a name the other side removed, and the merged commit
-    still has that use and declares the name nowhere. Used by the landing queue on the real merge result."""
+def merge_breaks(mb, ours, theirs, merged, cwd, parser=None):
+    """[(name, file, how)] where one side's new code uses a name the other side removed or whose parameters it
+    changed, and the merged commit still has that use (and, for removed names, declares the name nowhere).
+    Used by the landing queue on the real merge result."""
     cwd = str(cwd)
-    hits = set(uses(removed_names(mb, theirs, cwd), added_lines(mb, ours, cwd)))
-    hits |= set(uses(removed_names(mb, ours, cwd), added_lines(mb, theirs, cwd)))
+    hits = set(hits_between(mb, theirs, mb, ours, cwd, parser)) | set(hits_between(mb, ours, mb, theirs, cwd, parser))
     if not hits:
         return []
-    declared = _declared({n for n, _ in hits}, merged, cwd)
-    return sorted((n, f) for n, f in hits
-                  if n not in declared and re.search(rf"\b{re.escape(n)}\b", _show(merged, f, cwd)))
+    declared = _declared({n for n, _, how in hits if how == "removed"}, merged, cwd)
+    return sorted((n, f, how) for n, f, how in hits
+                  if not (how == "removed" and n in declared) and re.search(rf"\b{re.escape(n)}\b", _show(merged, f, cwd)))
 
 
 def describe(hits):

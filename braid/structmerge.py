@@ -8,7 +8,8 @@ a key (reassignments, the same call twice) depend on their order, so when both s
 the whole file takes a line merge instead.
 
 Python is parsed with `ast`. Brace languages (JS/TS, Go, Rust, Java, C/C++, C#, Swift, Kotlin, PHP)
-use a column-0 heuristic, guarded by a bracket-balance check. Anything else, or anything that fails to
+use a column-0 heuristic, guarded by a bracket-balance check, or, when Spelunk is installed, its tree-sitter
+outline (`spelunk outline`), which also splits classes into members. Anything else, or anything that fails to
 parse, falls back to `git merge-file`, so the result is never worse than git's.
 """
 import ast
@@ -25,6 +26,10 @@ SUPPORTED_EXT = PY_EXT | BRACE_EXT
 
 class Unsupported(Exception):
     pass
+
+
+class OrderDependent(Unsupported):
+    """Both sides changed statements whose order matters; only a line merge is safe."""
 
 
 # ---------------------------------------------------------------- splitting
@@ -235,7 +240,7 @@ def _check_repeats(base_chunks, our_chunks, their_chunks):
     for key in set(b) | set(o) | set(t):
         bg, og, tg = b.get(key, ()), o.get(key, ()), t.get(key, ())
         if max(len(bg), len(og), len(tg)) > 1 and og != bg and tg != bg and og != tg:
-            raise Unsupported(f"repeated statements {key} changed on both sides")
+            raise OrderDependent(f"repeated statements {key} changed on both sides")
 
 
 def merge_entities(base_chunks, our_chunks, their_chunks, labels, nested=None):
@@ -260,11 +265,12 @@ def merge_entities(base_chunks, our_chunks, their_chunks, labels, nested=None):
             if nested and bv is not None:
                 parts = [nested(v) for v in (bv, ov, tv)]
                 if all(parts):
-                    (bh, bc), (oh, oc), (th, tc) = parts
-                    head, head_clean = (oh, True) if oh == th else (th, True) if oh == bh else \
-                        (oh, True) if th == bh else line_merge(bh, oh, th, labels)
+                    (bh, bc, bt), (oh, oc, ot), (th, tc, tt) = (p if len(p) == 3 else (*p, "") for p in parts)
+                    head, head_clean = _merge_part(bh, oh, th, labels)
+                    tail, tail_clean = _merge_part(bt, ot, tt, labels)  # a closing brace, for brace languages
                     body, body_clean, _ = merge_entities(bc, oc, tc, labels)
-                    merged, clean = head + body, head_clean and body_clean
+                    merged = head + (_ensure_newline(body) if tail else body) + tail
+                    clean = head_clean and body_clean and tail_clean
             if merged is None:
                 merged, clean = line_merge(bv or "", ov, tv, labels)
             if not clean:
@@ -300,6 +306,14 @@ def merge_entities(base_chunks, our_chunks, their_chunks, labels, nested=None):
     return text, not conflicts, conflicts
 
 
+def _merge_part(base, ours, theirs, labels):
+    if ours == theirs or theirs == base:
+        return ours, True
+    if ours == base:
+        return theirs, True
+    return line_merge(base, ours, theirs, labels)
+
+
 def _first_non_import(order, key):
     if key.startswith("import:"):
         return 0
@@ -310,9 +324,20 @@ def _ensure_newline(s):
     return s if s.endswith("\n") or not s else s + "\n"
 
 
-def merge_text(base, ours, theirs, path, labels=("ours", "base", "theirs")):
-    """Merge three versions of `path`. Returns (text, clean, how) where how is 'structural' or 'line'."""
+def merge_text(base, ours, theirs, path, labels=("ours", "base", "theirs"), outline=None):
+    """Merge three versions of `path`. Returns (text, clean, how) where how is 'structural' or 'line'.
+
+    `outline(texts, path)`, when given, parses brace languages with a real parser (Spelunk's tree-sitter)
+    instead of the column-0 heuristic; see split_outline."""
     split, valid, nested = splitter_for(path)
+    if outline and split is split_brace:
+        try:
+            text, clean = _merge_outlined(base, ours, theirs, path, labels, outline)
+            return text, clean, "structural"
+        except OrderDependent:
+            split = None  # the heuristic would only see less; go straight to git's line merge
+        except Unsupported:
+            pass  # not parsed cleanly, or the result doesn't parse: try the heuristic, then git
     if split is not None:
         try:
             text, clean, _ = merge_entities(split(base), split(ours), split(theirs), labels, nested)
@@ -324,7 +349,80 @@ def merge_text(base, ours, theirs, path, labels=("ours", "base", "theirs")):
     return text, clean, "line"
 
 
-def driver_main(base_path, ours_path, theirs_path, path, marker_size=None):
+# ---------------------------------------------------------------- outlines from a real parser
+
+def _outline_key(item, src_lines):
+    kind, name = item.get("kind", ""), item.get("name")
+    if name is not None:
+        return f"{kind}:{name}"
+    text = " ".join("".join(src_lines).split())
+    if "import" in kind or "include" in kind or kind in ("use_declaration", "package_clause", "package_declaration"):
+        return "import:" + text
+    return "stmt:" + text
+
+
+def split_outline(text, items):
+    """Chunks from a parser's outline: [{kind, name?, start, end, members?}] with 1-based inclusive lines.
+
+    Returns (chunks, nested) where nested maps a class chunk's text to (header, member chunks, closing lines),
+    so merge_entities can merge classes member by member. Lines between entities go with the next one."""
+    lines, chunks, nested, cursor = _lines(text), [], {}, 0
+    for item in items:
+        start, end = int(item["start"]) - 1, int(item["end"])
+        if start < cursor or end > len(lines):
+            raise Unsupported("overlapping entities")  # e.g. two statements on one line
+        chunk = "".join(lines[cursor:end])
+        chunks.append((_outline_key(item, lines[start:end]), chunk))
+        members = item.get("members")
+        if members is not None:
+            parts = _split_members(lines, cursor, start, end, members)
+            if parts:
+                nested[chunk] = parts
+        cursor = end
+    if cursor < len(lines):
+        chunks.append(("<eof>", "".join(lines[cursor:])))
+    return _uniq(chunks), nested
+
+
+def _split_members(lines, cursor, start, end, members):
+    """(header, member chunks, closing lines) for one class, or None when the members share its first or last
+    line (`class A { m() {} }`), where splitting by line can't work."""
+    if members:
+        first, last = int(members[0]["start"]) - 1, int(members[-1]["end"])
+        if first <= start or last >= end:
+            return None
+    else:  # an empty body: everything but the closing line is the header
+        if end - start < 2 or not lines[end - 1].lstrip().startswith("}"):
+            return None
+        first = last = end - 1
+    hdr_end = first
+    while hdr_end > start + 1 and not lines[hdr_end - 1].strip():  # blank lines go with the first member
+        hdr_end -= 1
+    chunks, mcur = [], hdr_end
+    for m in members:
+        ms, me = int(m["start"]) - 1, int(m["end"])
+        if ms < mcur:
+            return None
+        chunks.append((_outline_key(m, lines[ms:me]), "".join(lines[mcur:me])))
+        mcur = me
+    return "".join(lines[cursor:hdr_end]), _uniq(chunks), "".join(lines[last:end])
+
+
+def _merge_outlined(base, ours, theirs, path, labels, outline):
+    files = outline([base, ours, theirs], path)
+    if not files or len(files) != 3 or not all(f.get("ok") for f in files):
+        raise Unsupported("no clean outline")
+    (bc, bn), (oc, on), (tc, tn) = (split_outline(t, f.get("items") or []) for t, f in zip((base, ours, theirs), files))
+    nested = {**bn, **on, **tn}
+    text, clean, _ = merge_entities(bc, oc, tc, labels, nested.get)
+    if clean:
+        check = outline([text], path)
+        if not check or not check[0].get("ok"):
+            raise Unsupported("merged result doesn't parse")
+    return text, clean
+
+
+def driver_main(base_path, ours_path, theirs_path, path, marker_size=None, outline=None):
     """Entry point for git's merge driver protocol: write result into ours_path; exit 0 clean, 1 conflict."""
     def read(p):
         with open(p, newline="") as f:
@@ -334,7 +432,7 @@ def driver_main(base_path, ours_path, theirs_path, path, marker_size=None):
     except UnicodeDecodeError:
         # binary: let git's own logic report it
         return 1
-    text, clean, _ = merge_text(base, ours, theirs, path)
+    text, clean, _ = merge_text(base, ours, theirs, path, outline=outline)
     with open(ours_path, "w", newline="") as f:
         f.write(text)
     return 0 if clean else 1
